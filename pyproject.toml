@@ -21,14 +21,17 @@ dependencies = []
 
 [project.optional-dependencies]
 # Real fare discovery via the open-source Google Flights reader.
-discovery = ["fast-flights>=2.2"]
+# typing_extensions is a real requirement of fast-flights that the package
+# forgets to declare -- without it the import dies with ModuleNotFoundError.
+discovery = ["fast-flights>=3.1", "typing_extensions>=4.9"]
 # Browser fallback for legs the lightweight reader cannot see.
 browser = ["playwright>=1.44"]
 # HTTP API.
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = ["pytest>=8.0"]
 all = [
-    "fast-flights>=2.2",
+    "fast-flights>=3.1",
+    "typing_extensions>=4.9",
     "playwright>=1.44",
     "fastapi>=0.110",
     "uvicorn>=0.29",
