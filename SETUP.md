@@ -126,9 +126,12 @@ If you continue this with a fresh agent, the useful context is:
 
 ### The highest-value next steps, in order
 
-1. **More carriers.** `fast-flights` (above) is the cheap win. Beyond that, the
-   `FlightProvider` interface is ~40 lines to implement; Transavia and Wizz have
-   semi-public endpoints. Royal Air Maroc is the notable gap on this corridor.
+1. **Run both providers by default.** `enabled = ["ryanair", "fast-flights"]`
+   in `policy.toml`. Google Flights covers essentially every airline including
+   Royal Air Maroc, but under-reports low-cost carriers -- CMN-AGP shows from
+   EUR 150 there while Ryanair's own API has RBA-AGP at EUR 61. You need both.
+   Beyond that, `FlightProvider` is ~40 lines to implement; Transavia and Wizz
+   have semi-public endpoints worth adding.
 2. **Real rail data.** Ground transport is currently estimated from road
    distance. ONCF publishes Moroccan timetables; a `TRAIN` mode with real times
    would sharpen every Casablanca↔Rabat decision.

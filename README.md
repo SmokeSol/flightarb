@@ -300,14 +300,24 @@ Morocco–Spain timezone boundary reports a sane elapsed time.
 ## Honest limitations
 
 **The zero-install default is one airline.** `ryanair` finds Ryanair fares and
-nothing else. On the Morocco–Spain corridor that happens to be exactly the
-carrier that creates the arbitrage — but Royal Air Maroc, Vueling and Transavia
-are invisible to it. Add multi-airline coverage with one package:
+nothing else — it is the default only because it needs nothing installed. Add
+full multi-airline coverage with one package:
 
 ```bash
 pip install -e ".[discovery]"
 flightarb search Casablanca Malaga --depart 2026-09-18 --providers ryanair,fast-flights
 ```
+
+Run **both**, not one. They are complementary, and the reason is the whole
+product thesis in two lines of live data:
+
+```
+CMN-AGP  via Google Flights   Iberia from EUR 150
+RBA-AGP  via Ryanair direct   Ryanair from EUR 61
+```
+
+Aggregators have breadth but under-report low-cost carriers; the carrier's own
+API has the cheap fare but only its own flights. Neither alone finds the answer.
 
 **`cheapestPerDay` gives the cheapest departure per day**, not every departure.
 Fine for deciding *where and when* to fly; check the airline site for the exact
