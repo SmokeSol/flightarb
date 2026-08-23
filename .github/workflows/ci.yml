@@ -77,28 +77,52 @@ jobs:
       - name: What does the installed fast-flights actually expose?
         run: |
           python - <<'PY'
-          import traceback
-          print("--- import ---")
+          import inspect, traceback, dataclasses
+          import fast_flights as ff
+
+          def show(name):
+              obj = getattr(ff, name, None)
+              if obj is None:
+                  print(f"{name}: MISSING"); return
+              try:
+                  print(f"{name}{inspect.signature(obj)}")
+              except (TypeError, ValueError):
+                  print(f"{name}: {obj!r}")
+              if dataclasses.is_dataclass(obj):
+                  print("   fields:", [(f.name, str(f.type)) for f in dataclasses.fields(obj)])
+              ann = getattr(obj, "__annotations__", None)
+              if ann: print("   annotations:", dict(ann))
+              meth = [m for m in dir(obj) if not m.startswith("_")]
+              if meth: print("   members:", meth[:25])
+
+          for n in ("create_query", "create_filter", "Query", "FlightQuery",
+                    "Passengers", "ResultList", "fetch_flights_html"):
+              show(n); print()
+
+          print("=== live call ===")
+          from datetime import date, timedelta
+          when = (date.today() + timedelta(days=40)).isoformat()
           try:
-              import fast_flights as ff
-              print("version:", getattr(ff, "__version__", "?"))
-              print("public:", sorted(n for n in dir(ff) if not n.startswith("_")))
-              import inspect
-              for name in ("get_flights", "FlightData", "Passengers"):
-                  obj = getattr(ff, name, None)
-                  if obj is None:
-                      print(f"{name}: MISSING")
-                      continue
-                  try:
-                      print(f"{name}{inspect.signature(obj)}")
-                  except (TypeError, ValueError):
-                      print(f"{name}: {obj!r}")
-              res = getattr(ff, "Result", None)
-              if res is not None:
-                  print("Result fields:", getattr(res, "__annotations__", {}))
-              flt = getattr(ff, "Flight", None)
-              if flt is not None:
-                  print("Flight fields:", getattr(flt, "__annotations__", {}))
+              q = ff.create_query(
+                  flights=[ff.FlightQuery(date=when, from_airport="MAD", to_airport="AGP")],
+                  passengers=ff.Passengers(adults=1),
+              )
+              print("query built:", type(q).__name__)
+              res = ff.get_flights(q)
+              print("result type:", type(res).__name__)
+              print("result members:", [m for m in dir(res) if not m.startswith("_")][:25])
+              items = list(res) if hasattr(res, "__iter__") else getattr(res, "flights", [])
+              print("items:", len(items))
+              if items:
+                  f = items[0]
+                  print("item type:", type(f).__name__)
+                  if dataclasses.is_dataclass(f):
+                      for fl in dataclasses.fields(f):
+                          print(f"   {fl.name} = {getattr(f, fl.name)!r}")
+                  else:
+                      for m in [m for m in dir(f) if not m.startswith("_")][:25]:
+                          try: print(f"   {m} = {getattr(f, m)!r}")
+                          except Exception: pass
           except Exception:
               traceback.print_exc()
           PY
