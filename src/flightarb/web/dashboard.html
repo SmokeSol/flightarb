@@ -60,6 +60,34 @@
   footer{max-width:64rem;margin:0 auto;padding:1.5rem 1.25rem;color:var(--muted);
     font-size:.8rem;border-top:1px solid var(--line)}
   code{background:var(--accent-soft);padding:.1rem .35rem;border-radius:4px;font-size:.85em}
+
+  /* search */
+  form#search{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:1rem 1.15rem;margin-bottom:1rem;box-shadow:var(--shadow);display:grid;gap:.8rem;
+    grid-template-columns:repeat(auto-fit,minmax(8rem,1fr))}
+  form#search label{display:flex;flex-direction:column;gap:.28rem;font-size:.74rem;color:var(--muted)}
+  form#search .wide{grid-column:span 2}
+  input,select{font:inherit;font-size:.88rem;padding:.45rem .55rem;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+  input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  button{font:inherit;font-weight:650;padding:.55rem 1rem;border-radius:8px;border:0;
+    background:var(--accent);color:#fff;cursor:pointer;align-self:end}
+  button:disabled{opacity:.55;cursor:progress}
+  #run{margin-bottom:1rem;font-size:.86rem;color:var(--muted)}
+  #run .bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:.45rem}
+  #run .bar i{display:block;height:100%;background:var(--accent);width:0;
+    animation:crawl 150s linear forwards}
+  @keyframes crawl{to{width:100%}}
+  .warn{color:var(--bad)}
+  dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);
+    color:var(--fg);max-width:34rem;padding:1.4rem}
+  dialog::backdrop{background:rgba(0,0,0,.5)}
+  dialog h2{margin:0 0 .6rem;font-size:1rem}
+  dialog p{font-size:.86rem;margin:.5rem 0}
+  dialog menu{display:flex;gap:.5rem;justify-content:flex-end;padding:0;margin:1rem 0 0}
+  dialog menu button[value="cancel"]{background:transparent;color:var(--muted);
+    border:1px solid var(--line)}
+  a{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -68,7 +96,44 @@
   <div id="meta">loading…</div>
 </header>
 
-<main><div class="grid" id="grid"></div><div id="problems"></div></main>
+<main>
+  <form id="search">
+    <label class="wide">From <input name="origin" placeholder="Casablanca" autocomplete="off" required></label>
+    <label class="wide">To <input name="destination" placeholder="Malaga" autocomplete="off" required></label>
+    <label>Depart <input type="date" name="depart" required></label>
+    <label>Return <input type="date" name="return"></label>
+    <label>Adults <input type="number" name="adults" value="1" min="1" max="9"></label>
+    <label>Children <input type="number" name="children" value="0" min="0" max="9"></label>
+    <label>Bags <input type="number" name="checked_bags" value="0" min="0" max="9"></label>
+    <label>Flex ± <input type="number" name="flex" value="3" min="0" max="5"></label>
+    <label>Drive up to (min) <input type="number" name="max_origin_minutes" value="240" min="0" max="600" step="10"></label>
+    <button id="go" type="submit">Search</button>
+  </form>
+  <div id="run"></div>
+  <div id="adhoc"></div>
+  <div class="grid" id="grid"></div>
+  <div id="problems"></div>
+</main>
+
+<dialog id="setup">
+  <form method="dialog">
+    <h2>One-time setup</h2>
+    <p>Searching runs the engine in GitHub Actions, and GitHub only accepts an
+      authenticated request. Paste a token and this page can trigger it directly.</p>
+    <p><a id="mktoken" target="_blank" rel="noopener">Create a token</a> — choose
+      <strong>Only select repositories → this one</strong>, and under
+      <strong>Repository permissions</strong> set <strong>Actions: Read and write</strong>.
+      Nothing else. Give it a short expiry.</p>
+    <p class="warn">It is stored in this browser only (localStorage), never sent
+      anywhere except github.com, and never committed. Anyone with it can run
+      workflows in this one repo — which is why you scope it to this repo alone.</p>
+    <input id="token" type="password" placeholder="github_pat_..." autocomplete="off">
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button id="savetoken" value="save">Save</button>
+    </menu>
+  </form>
+</dialog>
 
 <footer>
   Prices are refreshed by a scheduled GitHub Action and served as static files.
@@ -165,24 +230,141 @@ async function detail(slug, el){
   }
 }
 
-(async () => {
-  let d;
-  try { d = await (await fetch("data/index.json", {cache:"no-store"})).json(); }
-  catch(e){
-    $("#meta").textContent = "no data yet";
-    $("#grid").innerHTML = `<div class="card">No results published yet. Run the
-      <strong>watch</strong> workflow from the Actions tab.</div>`;
-    return;
+// --------------------------------------------------------------------------
+// Search. Pages cannot run Python, so the page asks GitHub Actions to run the
+// engine and then waits for the published result. That round trip is the price
+// of having no server at all.
+// --------------------------------------------------------------------------
+const REPO = (() => {
+  // Only a page served from *.github.io can work out which repo it belongs to.
+  // Opened from a file or a local server it cannot, so say so rather than
+  // firing requests at a repository guessed from "127.0.0.1".
+  const onPages = location.hostname.endsWith(".github.io");
+  if (!onPages) return null;
+  const owner = location.hostname.split(".")[0];
+  const repo = location.pathname.split("/").filter(Boolean)[0] || "flightarb";
+  return {owner, repo, api: `https://api.github.com/repos/${owner}/${repo}`};
+})();
+
+if (!REPO){
+  $("#search").querySelectorAll("input,button").forEach(el => el.disabled = true);
+  $("#run").innerHTML = `<div>Search runs the engine in GitHub Actions, so it only
+    works on the published site. Locally, use <code>flightarb serve</code> — that
+    runs the engine directly and is faster.</div>`;
+}
+const tokenKey = REPO ? `flightarb:${REPO.owner}/${REPO.repo}:token` : "flightarb:token";
+const getToken = () => localStorage.getItem(tokenKey);
+
+if (REPO) $("#mktoken").href =
+  `https://github.com/settings/personal-access-tokens/new?name=flightarb&description=` +
+  `Trigger%20flightarb%20searches&target_name=${REPO.repo}`;
+
+$("#savetoken").addEventListener("click", () => {
+  const v = $("#token").value.trim();
+  if (v) localStorage.setItem(tokenKey, v);
+});
+
+{ // sensible default dates
+  const iso = x => x.toISOString().slice(0,10);
+  $('[name=depart]').value = iso(new Date(Date.now() + 30*864e5));
+  $('[name=return]').value = iso(new Date(Date.now() + 34*864e5));
+}
+
+function status(html){ $("#run").innerHTML = html; }
+
+async function gh(path, opts = {}){
+  const res = await fetch(REPO.api + path, {
+    ...opts,
+    headers: {Authorization: `Bearer ${getToken()}`,
+              Accept: "application/vnd.github+json", ...(opts.headers||{})},
+  });
+  if (res.status === 401 || res.status === 403){
+    localStorage.removeItem(tokenKey);
+    throw new Error("GitHub rejected the token. It may be expired, or missing "
+                  + "the Actions: Read and write permission. Search again to re-enter it.");
   }
+  if (!res.ok) throw new Error(`GitHub returned ${res.status} for ${path}`);
+  return res.status === 204 ? null : res.json();
+}
 
-  const when = new Date(d.generated_at);
-  const ageH = (Date.now() - when) / 36e5;
-  $("#meta").innerHTML = `updated ${when.toLocaleString()} ` +
-    (ageH > 48 ? `<span class="tag high">stale</span>` : "");
+$("#search").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!getToken()){ $("#setup").showModal();
+    $("#setup").addEventListener("close", () => { if (getToken()) $("#search").requestSubmit(); },
+                                 {once:true});
+    return; }
 
-  $("#grid").innerHTML = d.trips.map(t => {
-    const hist = d.history?.[t.slug];
-    return `<section class="card" id="c-${esc(t.slug)}">
+  const form = new FormData(e.target);
+  const inputs = {};
+  for (const [k, v] of form.entries()) if (String(v).trim() !== "") inputs[k] = String(v);
+  const btn = $("#go");
+  btn.disabled = true;
+  const started = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now()-started)/1000);
+    btn.textContent = `Searching… ${s}s`;
+  }, 500);
+
+  try {
+    status(`<div>asking GitHub Actions to run the engine…</div><div class="bar"><i></i></div>`);
+    const since = new Date(Date.now() - 60_000).toISOString();
+    await gh(`/actions/workflows/watch.yml/dispatches`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ref: "main", inputs}),
+    });
+
+    // The dispatch returns before the run exists, so find it, then follow it.
+    let run = null;
+    for (let i = 0; i < 40 && !run; i++){
+      await new Promise(r => setTimeout(r, 3000));
+      const d = await gh(`/actions/workflows/watch.yml/runs?event=workflow_dispatch&per_page=5`);
+      run = (d.workflow_runs || []).find(r => r.created_at >= since) || null;
+      status(`<div>waiting for the run to start…</div><div class="bar"><i></i></div>`);
+    }
+    if (!run) throw new Error("the workflow did not start — check the Actions tab");
+
+    while (run.status !== "completed"){
+      status(`<div>engine running (<a href="${run.html_url}" target="_blank" rel="noopener">live log</a>)
+              — ${run.status.replace("_"," ")}</div><div class="bar"><i></i></div>`);
+      await new Promise(r => setTimeout(r, 5000));
+      run = await gh(`/actions/runs/${run.id}`);
+    }
+    if (run.conclusion !== "success")
+      throw new Error(`the run finished as "${run.conclusion}" — see ${run.html_url}`);
+
+    // Pages needs a moment to serve the freshly deployed files.
+    status(`<div>publishing results…</div><div class="bar"><i></i></div>`);
+    const wanted = slugFor(inputs.origin, inputs.destination);
+    for (let i = 0; i < 20; i++){
+      await new Promise(r => setTimeout(r, 4000));
+      const fresh = await loadIndex();
+      if (fresh && fresh.trips.some(t => t.slug === wanted)){
+        status(`<div>done in ${Math.round((Date.now()-started)/1000)}s</div>`);
+        render(fresh, wanted);
+        return;
+      }
+    }
+    status(`<div class="warn">the run finished but the site has not refreshed yet — reload in a moment</div>`);
+  } catch (err){
+    status(`<div class="err">${esc(err.message)}</div>`);
+  } finally {
+    clearInterval(tick); btn.disabled = false; btn.textContent = "Search";
+  }
+});
+
+function slugFor(origin, destination){
+  return `${origin} -> ${destination} (ad-hoc)`.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function loadIndex(){
+  try { return await (await fetch(`data/index.json?t=${Date.now()}`, {cache:"no-store"})).json(); }
+  catch(e){ return null; }
+}
+
+function cardFor(t, hist){
+  return `<section class="card" id="c-${esc(t.slug)}">
       <div class="name">${esc(t.name)}</div>
       <div class="when">${day(t.depart)}${t.return ? " → " + day(t.return) : ""} ·
         ${t.party.adults} adult${t.party.adults===1?"":"s"}${t.party.children?`, ${t.party.children} child`:""}</div>
@@ -197,22 +379,56 @@ async function detail(slug, el){
         <span>high ${eur(hist.dearest_ever)}</span></div>` : ""}
       <details><summary>Full breakdown</summary><div class="body">loading…</div></details>
     </section>`;
-  }).join("");
+}
 
-  for (const t of d.trips){
+function wire(trips){
+  for (const t of trips){
     const card = document.getElementById(`c-${t.slug}`);
+    if (!card) continue;
     card.querySelector("details").addEventListener("toggle", e => {
       if (e.target.open) detail(t.slug, card);
     });
   }
+}
+
+function render(d, highlight){
+  const when = new Date(d.generated_at);
+  const ageH = (Date.now() - when) / 36e5;
+  $("#meta").innerHTML = `updated ${when.toLocaleString()} ` +
+    (ageH > 48 ? `<span class="tag high">stale</span>` : "");
+
+  // A just-requested search goes above the standing watches, opened.
+  const found = highlight ? d.trips.find(t => t.slug === highlight) : null;
+  const rest = d.trips.filter(t => t !== found);
+
+  $("#adhoc").innerHTML = found
+    ? `<div style="margin-bottom:1rem">${cardFor(found, d.history?.[found.slug])}</div>` : "";
+  $("#grid").innerHTML = rest.map(t => cardFor(t, d.history?.[t.slug])).join("");
+  wire(d.trips);
+  if (found){
+    const card = document.getElementById(`c-${found.slug}`);
+    card.querySelector("details").open = true;
+    detail(found.slug, card);
+    card.scrollIntoView({behavior:"smooth", block:"start"});
+  }
 
   const failed = Object.entries(d.failed || {});
-  if (failed.length){
-    $("#problems").innerHTML = `<section class="card" style="margin-top:1rem">
-      <span class="tag high">Did not run</span>` +
+  $("#problems").innerHTML = failed.length
+    ? `<section class="card" style="margin-top:1rem"><span class="tag high">Did not run</span>` +
       failed.map(([n,r]) => `<div class="err" style="margin-top:.4rem">
-        <strong>${esc(n)}</strong>: ${esc(r)}</div>`).join("") + `</section>`;
+        <strong>${esc(n)}</strong>: ${esc(r)}</div>`).join("") + `</section>`
+    : "";
+}
+
+(async () => {
+  const d = await loadIndex();
+  if (!d){
+    $("#meta").textContent = "no data yet";
+    $("#grid").innerHTML = `<div class="card">No results published yet — search above,
+      or run the <strong>watch</strong> workflow from the Actions tab.</div>`;
+    return;
   }
+  render(d);
 })();
 </script>
 </body>
