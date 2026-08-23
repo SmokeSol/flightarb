@@ -25,7 +25,8 @@ from urllib.parse import quote
 
 from ..models import Cabin, Confidence, FlightOffer, Segment
 from .base import FlightProvider, ProviderUnavailable, SearchQuery
-from .fastflights import parse_duration, parse_price, to_eur, _carrier_code
+from .fastflights import carrier_code
+from .parsing import parse_duration, parse_price, to_eur
 
 # Aria labels are far more stable than class names, which are minified and
 # rotate constantly.
@@ -158,7 +159,7 @@ class BrowserProvider(FlightProvider):
                     hour = 0
                 depart = datetime.combine(query.depart_date, time(hour % 24, minute))
 
-            carrier = _carrier_code(flat)
+            carrier = carrier_code(flat)
             fingerprint = f"{carrier}{depart:%H%M}{round(price_eur)}{stops}"
             if fingerprint in seen:
                 continue

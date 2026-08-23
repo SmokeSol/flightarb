@@ -74,48 +74,6 @@ jobs:
       - run: pip install -e ".[dev,discovery]"
       - run: python -m flightarb.cli data --refresh
 
-      - name: What does the installed fast-flights actually expose?
-        run: |
-          python - <<'PY'
-          import dataclasses, inspect, traceback
-          import fast_flights as ff
-          from datetime import date, timedelta
-
-          print("=== model module ===")
-          for mod in (ff.model, ff.parser):
-              print("--", mod.__name__)
-              for n in dir(mod):
-                  o = getattr(mod, n)
-                  if dataclasses.is_dataclass(o):
-                      print(f"   {n}: {[f.name for f in dataclasses.fields(o)]}")
-
-          print()
-          print("=== live call ===")
-          when = (date.today() + timedelta(days=40)).isoformat()
-          try:
-              q = ff.create_query(
-                  flights=[ff.FlightQuery(date=when, from_airport="MAD", to_airport="AGP")],
-                  passengers=ff.Passengers(adults=1), currency="EUR", seat="economy",
-                  trip="one-way", max_stops=1)
-              res = ff.get_flights(q)
-              print("items:", len(res), "metadata:", getattr(res, "metadata", None))
-              for i, f in enumerate(res[:3]):
-                  print(f"--- item {i}: {type(f).__name__}")
-                  print("   repr:", repr(f)[:400])
-                  d = getattr(f, "__dict__", None)
-                  if d:
-                      for k, v in d.items():
-                          print(f"   .{k} = {v!r}"[:220])
-                  for m in [m for m in dir(f) if not m.startswith("_")]:
-                      if d and m in d: continue
-                      try:
-                          v = getattr(f, m)
-                          if not callable(v): print(f"   .{m} = {v!r}"[:220])
-                      except Exception: pass
-          except Exception:
-              traceback.print_exc()
-          PY
-
       - name: fast-flights adapter is usable
         run: |
           python - <<'PY'
@@ -137,9 +95,15 @@ jobs:
           offers = p.search(SearchQuery("MAD", "AGP", when, None, seats=1,
                                         cabin=Cabin.ECONOMY, max_stops=1))
           print(f"{len(offers)} offers returned")
-          for o in offers[:5]:
-              print(f"  {o.route_label} {o.depart:%Y-%m-%d %H:%M} "
-                    f"{o.carriers} EUR {o.price_eur} stops={o.stops}")
+          for o in offers[:6]:
+              print(f"  {o.route_label:<12s} {o.depart:%Y-%m-%d %H:%M}->{o.arrive:%H:%M} "
+                    f"{','.join(o.carriers):<6s} EUR {o.price_eur:>7.2f} "
+                    f"stops={o.stops} elapsed={o.duration_min}m")
+          # 3.x gives real segments, so multi-leg itineraries must carry more
+          # than one segment rather than being flattened into a single row.
+          multi = [o for o in offers if o.stops > 0]
+          if multi and any(len(o.segments) != o.stops + 1 for o in multi):
+              sys.exit("connecting itineraries lost their segment structure")
           if not offers:
               sys.exit("adapter returned nothing -- upstream shape may have changed")
           bad = [o for o in offers if o.price_eur <= 0 or o.duration_min <= 0]

@@ -1,85 +1,87 @@
-"""Discovery adapter built on the open-source ``fast-flights`` package.
+"""Multi-airline discovery, built on the open-source ``fast-flights`` package.
 
-Role in the system: *candidate generation only*.
+Role in the system: *candidate generation*.
 
-This is a reverse-engineered reader of a public search surface.  Its own issue
-tracker documents itineraries that are visible in a browser but missing from
-its results, so treating it as a price oracle would be a mistake.  Everything
-it returns is ``Confidence.DISCOVERY``: good enough to decide which five
-journeys are worth verifying, never good enough to be the final number.
+This reads a public search surface that nobody guarantees to us. Its own issue
+tracker documents itineraries visible in a browser but missing from its results,
+so treating it as a price oracle would be a mistake. Everything it returns is
+``Confidence.DISCOVERY``: good enough to decide which journeys deserve
+attention, never good enough to be the final number. Finalists get re-priced at
+the carrier.
 
-Install with:  pip install fast-flights
+Written against **fast-flights 3.x**, whose model is a great deal better than
+2.x's: real per-segment records with airport codes, local departure and arrival
+clocks, per-segment durations, and a numeric price in whatever currency we ask
+for. No string scraping of "1 hr 15 min" or "€123" any more.
+
+    Flights(type='UX', price=95, airlines=['Air Europa'], flights=[
+        SingleFlight(from_airport=Airport(code='MAD'), to_airport=Airport(code='AGP'),
+                     departure=SimpleDatetime(date=(2026,10,2), time=(6,30)),
+                     arrival=SimpleDatetime(...), duration=75, plane_type='Boeing 737')])
+
+Install with:  pip install "flightarb[discovery]"
+
+(The extra also pins ``typing_extensions``, which fast-flights imports but does
+not declare -- without it the package fails to import at all.)
 """
 
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, timedelta
 
 from ..models import Cabin, Confidence, FlightOffer, Segment
 from .base import FlightProvider, ProviderUnavailable, SearchQuery
 
-# Static conversion table. A flight search does not justify a paid FX feed;
-# these only need to be right enough to rank, and the verification pass
-# re-prices the finalists in their real currency anyway.
-FX_TO_EUR = {
-    "EUR": 1.0, "€": 1.0,
-    "USD": 0.92, "$": 0.92,
-    "GBP": 1.17, "£": 1.17,
-    "MAD": 0.092, "DH": 0.092,
-    "CHF": 1.04, "PLN": 0.23, "SEK": 0.088, "NOK": 0.086, "DKK": 0.134,
+SEAT = {
+    Cabin.ECONOMY: "economy",
+    Cabin.PREMIUM: "premium-economy",
+    Cabin.BUSINESS: "business",
+    Cabin.FIRST: "first",
 }
 
-_PRICE_RE = re.compile(r"([€$£]|\b[A-Z]{3}\b)?\s*([\d][\d,.\s]*)")
-_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*(AM|PM)?", re.I)
-_DUR_RE = re.compile(r"(?:(\d+)\s*hr)?\s*(?:(\d+)\s*min)?", re.I)
+_IATA = re.compile(r"^[A-Z0-9]{2}$")
+
+_AIRLINE_CODES = {
+    "ryanair": "FR", "wizz": "W6", "easyjet": "U2", "vueling": "VY",
+    "iberia": "IB", "air europa": "UX", "royal air maroc": "AT",
+    "air arabia": "3O", "transavia": "TO", "tap": "TP", "air france": "AF",
+    "british airways": "BA", "lufthansa": "LH", "klm": "KL", "turkish": "TK",
+    "ita": "AZ", "eurowings": "EW", "binter": "NT", "volotea": "V7",
+    "norwegian": "DY", "brussels": "SN", "swiss": "LX", "aegean": "A3",
+}
 
 
-def parse_price(text: str) -> tuple[float, str] | None:
-    if not text:
-        return None
-    m = _PRICE_RE.search(text.replace(" ", " "))
-    if not m:
-        return None
-    symbol = (m.group(1) or "EUR").strip().upper()
-    digits = m.group(2).replace(",", "").replace(" ", "").rstrip(".")
+def carrier_code(text: str) -> str:
+    """Map an airline name to its IATA code; pass a code straight through."""
+    raw = (text or "").strip()
+    if _IATA.match(raw.upper()):
+        return raw.upper()
+    low = raw.lower()
+    for needle, code in _AIRLINE_CODES.items():
+        if needle in low:
+            return code
+    return (raw[:2].upper() or "??")
+
+
+def _to_datetime(stamp) -> datetime | None:
+    """``SimpleDatetime(date=(2026, 10, 2), time=(6, 30))`` -> datetime."""
     try:
-        value = float(digits)
-    except ValueError:
+        y, m, d = stamp.date
+        hh, mm = stamp.time
+        return datetime(int(y), int(m), int(d), int(hh), int(mm))
+    except (AttributeError, TypeError, ValueError):
         return None
-    return value, symbol
-
-
-def to_eur(value: float, symbol: str) -> float:
-    return value * FX_TO_EUR.get(symbol, 1.0)
-
-
-def parse_clock(text: str, day: date) -> datetime | None:
-    m = _TIME_RE.search(text or "")
-    if not m:
-        return None
-    hour, minute = int(m.group(1)), int(m.group(2))
-    meridiem = (m.group(3) or "").upper()
-    if meridiem == "PM" and hour < 12:
-        hour += 12
-    elif meridiem == "AM" and hour == 12:
-        hour = 0
-    return datetime.combine(day, time(hour % 24, minute))
-
-
-def parse_duration(text: str) -> int:
-    m = _DUR_RE.search(text or "")
-    if not m:
-        return 0
-    hours = int(m.group(1) or 0)
-    minutes = int(m.group(2) or 0)
-    return hours * 60 + minutes
 
 
 class FastFlightsProvider(FlightProvider):
     name = "fast-flights"
     real_prices = True
-    supports_round_trip = True
+    #: One-way only. A round-trip query returns outbound options priced for the
+    #: whole trip without the matching return legs, which we cannot model
+    #: honestly. The engine prices each direction independently anyway, and
+    #: recombines -- so this costs nothing and keeps the data truthful.
+    supports_round_trip = False
 
     def __init__(self, ctx):
         super().__init__(ctx)
@@ -90,12 +92,11 @@ class FastFlightsProvider(FlightProvider):
 
             self._mod = fast_flights
         except ImportError as exc:
-            self._import_error = f"not installed ({exc})"
+            self._import_error = f"not installed ({exc}) -- pip install \"flightarb[discovery]\""
         except Exception as exc:
-            # An installed-but-broken dependency is a completely different
-            # problem from a missing one -- most often a protobuf runtime
-            # mismatch. Reporting both as "not installed" sends you to fix the
-            # wrong thing, so keep the real reason.
+            # An installed-but-broken dependency is a different problem from a
+            # missing one. Reporting both as "not installed" sends you off to
+            # fix the wrong thing, so keep the real reason.
             self._import_error = f"installed but failed to import: {type(exc).__name__}: {exc}"
 
     def available(self) -> bool:
@@ -103,129 +104,110 @@ class FastFlightsProvider(FlightProvider):
 
     def unavailable_reason(self) -> str | None:
         if self._mod is None:
-            return self._import_error or "package not installed (pip install fast-flights)"
+            return self._import_error
         return super().unavailable_reason()
 
     # ------------------------------------------------------------------ #
     def _search(self, query: SearchQuery) -> list[FlightOffer]:
-        if self._mod is None:
-            raise ProviderUnavailable("fast-flights not installed")
-        m = self._mod
+        ff = self._mod
+        if ff is None:
+            raise ProviderUnavailable(self._import_error or "fast-flights unavailable")
 
-        legs = [m.FlightData(date=query.depart_date.isoformat(),
-                             from_airport=query.origin, to_airport=query.destination)]
-        trip = "one-way"
-        if query.return_date is not None:
-            legs.append(m.FlightData(date=query.return_date.isoformat(),
-                                     from_airport=query.destination, to_airport=query.origin))
-            trip = "round-trip"
-
-        seat = {
-            Cabin.ECONOMY: "economy",
-            Cabin.PREMIUM: "premium-economy",
-            Cabin.BUSINESS: "business",
-            Cabin.FIRST: "first",
-        }[query.cabin]
-
-        kwargs = dict(
-            flight_data=legs,
-            trip=trip,
-            seat=seat,
-            passengers=m.Passengers(adults=max(1, query.seats), children=0,
-                                    infants_in_seat=0, infants_on_lap=0),
-            fetch_mode="fallback",
-        )
         try:
-            result = m.get_flights(**kwargs)
-        except TypeError:
-            kwargs.pop("fetch_mode", None)
-            result = m.get_flights(**kwargs)
+            leg = ff.FlightQuery(
+                date=query.depart_date.isoformat(),
+                from_airport=query.origin,
+                to_airport=query.destination,
+                max_stops=query.max_stops,
+            )
+            built = ff.create_query(
+                flights=[leg],
+                seat=SEAT[query.cabin],
+                trip="one-way",
+                passengers=ff.Passengers(adults=max(1, query.seats)),
+                currency="EUR",           # priced in our currency, no FX guessing
+                max_stops=query.max_stops,
+                # Ask the source to price the bags the traveller is bringing,
+                # instead of us modelling them from a table.
+                carry_on_bags=int(self.policy.get("bags.cabin", 0)),
+                checked_bags=int(self.policy.get("bags.checked", 0)),
+            )
+            result = ff.get_flights(built)
         except Exception as exc:
-            raise ProviderUnavailable(str(exc)) from exc
+            raise ProviderUnavailable(f"{type(exc).__name__}: {exc}") from exc
 
-        flights = getattr(result, "flights", None) or []
         offers: list[FlightOffer] = []
-        for f in flights:
-            offer = self._to_offer(f, query)
+        for row in list(result):
+            offer = self._to_offer(row, query)
             if offer is not None:
                 offers.append(offer)
+        offers.sort(key=lambda o: o.price_eur)
         return offers
 
-    def _to_offer(self, f, query: SearchQuery) -> FlightOffer | None:
-        """Map one library row onto our model. Defensive by design -- the
-        upstream shape has changed between releases more than once."""
-        priced = parse_price(str(getattr(f, "price", "") or ""))
-        if priced is None:
-            return None
-        amount, symbol = priced
-        default_ccy = str(self.policy.get("providers.fastflights.currency", "EUR")).upper()
-        price_eur = to_eur(amount, symbol if symbol in FX_TO_EUR else default_ccy)
-
-        depart = parse_clock(str(getattr(f, "departure", "")), query.depart_date)
-        if depart is None:
-            depart = datetime.combine(query.depart_date, time(9, 0))
-        duration = parse_duration(str(getattr(f, "duration", ""))) or 120
-
-        stops_raw = getattr(f, "stops", 0)
+    def _to_offer(self, row, query: SearchQuery) -> FlightOffer | None:
+        """One ``Flights`` record -> one of our offers."""
         try:
-            stops = int(stops_raw)
-        except (TypeError, ValueError):
-            stops = 0 if "non" in str(stops_raw).lower() else 1
-        if stops > query.max_stops:
+            price = float(row.price)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if price <= 0:
             return None
 
-        carrier_name = str(getattr(f, "name", "") or "").strip()
-        carrier = _carrier_code(carrier_name)
+        airlines = list(getattr(row, "airlines", None) or [])
+        code = carrier_code(getattr(row, "type", "") or (airlines[0] if airlines else ""))
 
-        # The library reports the itinerary, not each segment. We model it as a
-        # single elapsed-time segment and carry the true stop count in `raw`;
-        # the cost engine uses duration_min and stops, never segment internals.
-        seg = Segment(
-            carrier=carrier,
-            flight_no=f"{carrier}----",
-            origin=query.origin,
-            destination=query.destination,
-            depart=depart,
-            arrive=depart + timedelta(minutes=duration),
-            duration_min=duration,
-            cabin=query.cabin,
-        )
+        segments: list[Segment] = []
+        for leg in getattr(row, "flights", None) or []:
+            depart = _to_datetime(getattr(leg, "departure", None))
+            arrive = _to_datetime(getattr(leg, "arrival", None))
+            origin = getattr(getattr(leg, "from_airport", None), "code", None)
+            destination = getattr(getattr(leg, "to_airport", None), "code", None)
+            if not (depart and arrive and origin and destination):
+                return None
+            try:
+                duration = int(getattr(leg, "duration", 0))
+            except (TypeError, ValueError):
+                duration = 0
+            if duration <= 0:
+                # Both clocks are at their own airport, so this is only right
+                # within a timezone -- but it is a fallback, not the norm.
+                duration = max(1, int((arrive - depart).total_seconds() // 60))
+            segments.append(
+                Segment(
+                    carrier=code,
+                    flight_no=f"{code}····",
+                    origin=str(origin),
+                    destination=str(destination),
+                    depart=depart,
+                    arrive=arrive,
+                    duration_min=duration,
+                    cabin=query.cabin,
+                )
+            )
+
+        if not segments:
+            return None
+        if len(segments) - 1 > query.max_stops:
+            return None
+
+        # A layover is measured between two clocks at the *same* airport, so it
+        # is always correct regardless of timezones -- which is why we keep the
+        # real segments rather than collapsing the itinerary into one row.
         return FlightOffer(
-            segments=(seg,),
-            price_eur=round(price_eur / max(1, query.seats) if _is_total(f) else price_eur, 2),
+            segments=tuple(segments),
+            price_eur=round(price, 2),
             provider=self.name,
             fare_brand="unknown",
-            included_checked_bags=0,
+            included_cabin_bags=int(self.policy.get("bags.cabin", 0)),
+            included_checked_bags=int(self.policy.get("bags.checked", 0)),
             confidence=Confidence.DISCOVERY,
             booking_url=None,
             raw={
-                "airline": carrier_name,
-                "stops": stops,
-                "raw_price": str(getattr(f, "price", "")),
-                "is_best": bool(getattr(f, "is_best", False)),
-                "arrival_time_ahead": str(getattr(f, "arrival_time_ahead", "")),
-                "round_trip": query.return_date is not None,
+                "airlines": airlines,
+                "itinerary_type": getattr(row, "type", None),
+                "stops": len(segments) - 1,
+                "plane": [getattr(s, "plane_type", None) for s in (row.flights or [])],
+                "carbon_g": getattr(getattr(row, "carbon", None), "emission", None),
+                "bags_priced_in_query": True,
             },
         )
-
-
-def _is_total(f) -> bool:
-    """Some releases report a party total rather than a per-passenger fare."""
-    return bool(getattr(f, "is_total_price", False))
-
-
-_AIRLINE_CODES = {
-    "ryanair": "FR", "wizz": "W6", "easyjet": "U2", "vueling": "VY",
-    "iberia": "IB", "air europa": "UX", "royal air maroc": "AT",
-    "air arabia": "3O", "transavia": "TO", "tap": "TP", "air france": "AF",
-    "british airways": "BA", "lufthansa": "LH", "klm": "KL", "turkish": "TK",
-    "ita": "AZ", "eurowings": "EW", "binter": "NT", "volotea": "V7",
-}
-
-
-def _carrier_code(name: str) -> str:
-    low = name.lower()
-    for needle, code in _AIRLINE_CODES.items():
-        if needle in low:
-            return code
-    return (name[:2].upper() or "??")

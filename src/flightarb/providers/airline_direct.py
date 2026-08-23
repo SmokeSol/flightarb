@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 
 from ..models import Confidence, FlightOffer, Segment
 from .base import FlightProvider, ProviderUnavailable, SearchQuery
-from .fastflights import FX_TO_EUR
+from .parsing import FX_TO_EUR
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
