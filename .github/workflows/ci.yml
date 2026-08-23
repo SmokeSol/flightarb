@@ -60,9 +60,11 @@ jobs:
             --adults 2 --children 2 --checked-bags 1 \
             --flex 3 --max-origin-minutes 240 --quiet
 
-  # The multi-airline adapter is written but has never run on the author's
-  # machine, because the package was not installed there. This job is the only
-  # thing that proves it imports, constructs and returns usable offers.
+  # The multi-airline adapter cannot be exercised on the author's machine, so
+  # this job is the only thing that proves it still matches the upstream shape.
+  # It fails on exceptions and malformed offers; an empty result is reported as
+  # inconclusive, because Google Flights throttles datacenter IPs and a job that
+  # goes red for that reason is a job nobody reads.
   discovery:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -110,9 +112,9 @@ jobs:
                   break
 
           if errors:
-              sys.exit("adapter raised:
-  " + "
-  ".join(errors))
+              for e in errors:
+                  print("ADAPTER RAISED:", e)
+              sys.exit(len(errors))
 
           if not offers:
               print("::warning::fast-flights imported and ran cleanly but the upstream "
