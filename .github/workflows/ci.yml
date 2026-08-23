@@ -77,52 +77,41 @@ jobs:
       - name: What does the installed fast-flights actually expose?
         run: |
           python - <<'PY'
-          import inspect, traceback, dataclasses
+          import dataclasses, inspect, traceback
           import fast_flights as ff
-
-          def show(name):
-              obj = getattr(ff, name, None)
-              if obj is None:
-                  print(f"{name}: MISSING"); return
-              try:
-                  print(f"{name}{inspect.signature(obj)}")
-              except (TypeError, ValueError):
-                  print(f"{name}: {obj!r}")
-              if dataclasses.is_dataclass(obj):
-                  print("   fields:", [(f.name, str(f.type)) for f in dataclasses.fields(obj)])
-              ann = getattr(obj, "__annotations__", None)
-              if ann: print("   annotations:", dict(ann))
-              meth = [m for m in dir(obj) if not m.startswith("_")]
-              if meth: print("   members:", meth[:25])
-
-          for n in ("create_query", "create_filter", "Query", "FlightQuery",
-                    "Passengers", "ResultList", "fetch_flights_html"):
-              show(n); print()
-
-          print("=== live call ===")
           from datetime import date, timedelta
+
+          print("=== model module ===")
+          for mod in (ff.model, ff.parser):
+              print("--", mod.__name__)
+              for n in dir(mod):
+                  o = getattr(mod, n)
+                  if dataclasses.is_dataclass(o):
+                      print(f"   {n}: {[f.name for f in dataclasses.fields(o)]}")
+
+          print()
+          print("=== live call ===")
           when = (date.today() + timedelta(days=40)).isoformat()
           try:
               q = ff.create_query(
                   flights=[ff.FlightQuery(date=when, from_airport="MAD", to_airport="AGP")],
-                  passengers=ff.Passengers(adults=1),
-              )
-              print("query built:", type(q).__name__)
+                  passengers=ff.Passengers(adults=1), currency="EUR", seat="economy",
+                  trip="one-way", max_stops=1)
               res = ff.get_flights(q)
-              print("result type:", type(res).__name__)
-              print("result members:", [m for m in dir(res) if not m.startswith("_")][:25])
-              items = list(res) if hasattr(res, "__iter__") else getattr(res, "flights", [])
-              print("items:", len(items))
-              if items:
-                  f = items[0]
-                  print("item type:", type(f).__name__)
-                  if dataclasses.is_dataclass(f):
-                      for fl in dataclasses.fields(f):
-                          print(f"   {fl.name} = {getattr(f, fl.name)!r}")
-                  else:
-                      for m in [m for m in dir(f) if not m.startswith("_")][:25]:
-                          try: print(f"   {m} = {getattr(f, m)!r}")
-                          except Exception: pass
+              print("items:", len(res), "metadata:", getattr(res, "metadata", None))
+              for i, f in enumerate(res[:3]):
+                  print(f"--- item {i}: {type(f).__name__}")
+                  print("   repr:", repr(f)[:400])
+                  d = getattr(f, "__dict__", None)
+                  if d:
+                      for k, v in d.items():
+                          print(f"   .{k} = {v!r}"[:220])
+                  for m in [m for m in dir(f) if not m.startswith("_")]:
+                      if d and m in d: continue
+                      try:
+                          v = getattr(f, m)
+                          if not callable(v): print(f"   .{m} = {v!r}"[:220])
+                      except Exception: pass
           except Exception:
               traceback.print_exc()
           PY
