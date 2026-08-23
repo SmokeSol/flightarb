@@ -133,11 +133,13 @@ jobs:
 
       - name: Run the watchlist
         run: |
-          python -m flightarb.cli watch \
+          # The database lives in the runner tmp, not the cached data/ dir: within one
+          # run it stops shared routes being queried twice, and discarding it afterwards
+          # stops a cached fare outliving the run that fetched it.
+          python -m flightarb.cli --db "${RUNNER_TEMP}/run.sqlite3" watch \
             --providers ryanair,fast-flights \
             --site site \
-            --history history/observations.jsonl \
-            --no-db
+            --history history/observations.jsonl
 
       - name: Commit the price history
         run: |
