@@ -1,0 +1,112 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The engine itself. No network, no optional packages -- if this fails, the
+  # logic broke, not a fare.
+  core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Cache the free datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: datasets-${{ hashFiles('src/flightarb/geo/datasets.py') }}
+
+      - name: Fetch datasets
+        run: python -m flightarb.cli data --refresh
+
+      - name: Offline test suite
+        run: python -m pytest -q -m "not network"
+
+  # Live carrier API. Allowed to fail: a third party being down is not a bug in
+  # this repository, but we want to see it turn red when it happens.
+  live:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: python -m flightarb.cli data --refresh
+      - name: Bring-up check
+        run: python -m flightarb.cli doctor
+      - name: Live carrier tests
+        run: python -m pytest -q -m network
+      - name: Real end-to-end search
+        run: |
+          python -m flightarb.cli search Casablanca Malaga \
+            --depart $(date -u -d "+40 days" +%Y-%m-%d) \
+            --return $(date -u -d "+44 days" +%Y-%m-%d) \
+            --adults 2 --children 2 --checked-bags 1 \
+            --flex 3 --max-origin-minutes 240 --quiet
+
+  # The multi-airline adapter is written but has never run on the author's
+  # machine, because the package was not installed there. This job is the only
+  # thing that proves it imports, constructs and returns usable offers.
+  discovery:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,discovery]"
+      - run: python -m flightarb.cli data --refresh
+
+      - name: fast-flights adapter is usable
+        run: |
+          python - <<'PY'
+          import sys
+          from datetime import date, timedelta
+          from flightarb.policy import Policy
+          from flightarb.runtime import Runtime
+          from flightarb.providers.base import SearchQuery
+          from flightarb.models import Cabin
+
+          rt = Runtime.build(policy=Policy.default(), db_path=None,
+                             providers=["fast-flights"])
+          if not rt.registry.providers:
+              print("UNAVAILABLE:", rt.registry.skipped)
+              sys.exit(1)
+
+          p = rt.registry.providers[0]
+          when = date.today() + timedelta(days=40)
+          offers = p.search(SearchQuery("MAD", "AGP", when, None, seats=1,
+                                        cabin=Cabin.ECONOMY, max_stops=1))
+          print(f"{len(offers)} offers returned")
+          for o in offers[:5]:
+              print(f"  {o.route_label} {o.depart:%Y-%m-%d %H:%M} "
+                    f"{o.carriers} EUR {o.price_eur} stops={o.stops}")
+          if not offers:
+              sys.exit("adapter returned nothing -- upstream shape may have changed")
+          bad = [o for o in offers if o.price_eur <= 0 or o.duration_min <= 0]
+          if bad:
+              sys.exit(f"{len(bad)} offers failed sanity checks")
+          PY
+
+      - name: Real search using multi-airline discovery
+        run: |
+          python -m flightarb.cli search Madrid Malaga \
+            --depart $(date -u -d "+40 days" +%Y-%m-%d) \
+            --adults 1 --providers fast-flights --quiet

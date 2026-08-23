@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flightarb"
+version = "0.1.0"
+description = "Autonomous trip-arbitrage engine: ranks door-to-door journeys, not airfares."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["flights", "travel", "arbitrage", "optimisation", "pareto"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+# The engine core runs on the standard library alone -- no runtime dependency,
+# no API key, no account. Everything below is opt-in.
+dependencies = []
+
+[project.optional-dependencies]
+# Real fare discovery via the open-source Google Flights reader.
+discovery = ["fast-flights>=2.2"]
+# Browser fallback for legs the lightweight reader cannot see.
+browser = ["playwright>=1.44"]
+# HTTP API.
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8.0"]
+all = [
+    "fast-flights>=2.2",
+    "playwright>=1.44",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+flightarb = "flightarb.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+flightarb = ["web/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["error::DeprecationWarning"]
+markers = ["network: hits a live carrier API; skipped when unreachable"]

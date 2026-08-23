@@ -1,0 +1,161 @@
+# ===========================================================================
+#  Traveller policy -- the file that makes this engine *yours*.
+#
+#  Two people asking "Casablanca -> Malaga" should legitimately get different
+#  recommendations.  Everything the engine trades off lives here, so the
+#  ranking is auditable instead of a black box.
+#
+#  Format is TOML because Python 3.11+ parses it with the standard library
+#  (tomllib) -- no PyYAML dependency for a config file.  JSON is also accepted.
+# ===========================================================================
+
+[traveler]
+# What an hour of your travelling time is worth. This single number decides
+# whether "cheaper but 3h longer" wins. Set it honestly.
+value_of_time_eur_hour = 25.0
+# Each additional traveller adds this fraction of the value of time.
+# 4 people => 1 + 3*0.5 = 2.5x. Not 4x -- a family waits together.
+group_time_discount = 0.5
+home_country = "MA"
+
+[airports]
+# Reachability is measured in MINUTES, not kilometres. 100 km of motorway and
+# 100 km of mountain road are not the same offer.
+max_origin_reposition_minutes = 120
+max_destination_transfer_minutes = 120
+max_origin_candidates = 4
+max_destination_candidates = 4
+# Small airports are usually noise; flip on for regional hunting.
+include_small_airports = false
+# Never consider an airport with no scheduled service.
+require_scheduled_service = true
+
+[flight]
+max_stops = 1
+allow_self_transfer = true
+allow_separate_tickets = true
+# never | conditional | always
+allow_overnight = "conditional"
+allow_airport_change_in_transit = false
+# Carrier-protected connections.
+min_connection_min = 60
+# Self-transfer needs enough slack to re-clear security and bag drop.
+min_self_transfer_min = 150
+min_self_transfer_intl_min = 180
+# Beyond this a "connection" is really an unplanned overnight stay.
+max_self_transfer_gap_min = 600
+# When overnight layovers are allowed, pairs up to this gap are still built --
+# and then charged a hotel night, so they lose honestly rather than invisibly.
+max_overnight_gap_min = 1080
+earliest_departure = "05:00"
+latest_arrival = "23:59"
+# Hidden-city / throwaway ticketing stays OFF. It breaks return legs, bans
+# checked bags, and can get accounts closed. Not a default.
+allow_hidden_city = false
+
+[economics]
+# The heart of the product: how much money justifies how much pain.
+min_saving_per_extra_hour = 40.0
+min_saving_for_self_transfer = 100.0
+min_saving_for_separate_tickets = 40.0
+min_saving_for_airport_change = 60.0
+# Below this, don't bother recommending an alternative to the obvious route.
+min_saving_to_recommend = 25.0
+overnight_hotel_eur = 90.0
+
+[bags]
+cabin = 1
+checked = 0
+
+# Modelled bag fees, per bag, per direction. Scrapers rarely price these and
+# they routinely decide which "cheapest" flight is actually cheapest.
+[bag_fees]
+default_checked_eur = 45.0
+default_cabin_eur = 25.0
+
+[bag_fees.by_carrier]
+FR = 35.0   # Ryanair
+W6 = 32.0   # Wizz Air
+U2 = 40.0   # easyJet
+VY = 40.0   # Vueling
+AT = 0.0    # Royal Air Maroc -- checked bag in base fare
+IB = 30.0   # Iberia
+TP = 35.0   # TAP
+AF = 0.0
+LH = 0.0
+TK = 0.0
+
+[ground]
+# estimate = offline road-distance model (works with no network at all)
+# osrm     = real road routing against an OSRM server
+router = "estimate"
+osrm_url = "https://router.project-osrm.org"
+# The public OSRM demo server is for light/demo use. Opt in deliberately, or
+# point osrm_url at your own container and leave this false.
+osrm_public_demo_optin = false
+# car | transit | auto. "auto" prices both and picks whichever is better for
+# THIS party: a train beats driving for one person, a car beats it for four.
+mode = "auto"
+cost_per_km_eur = 0.22
+fixed_cost_eur = 3.0
+# Public transport is modelled, not routed -- there is no free worldwide rail
+# API. Per person, slower than driving, far cheaper per head. Override the
+# mode explicitly if your corridor has no usable service.
+transit_base_eur = 1.5
+transit_cost_per_km_eur = 0.06
+transit_time_factor = 1.25
+transit_wait_min = 15
+transit_max_km = 400
+# Airport-side time that has nothing to do with the flight itself.
+checkin_buffer_domestic_min = 75
+checkin_buffer_intl_min = 120
+arrival_buffer_min = 25
+arrival_buffer_checked_bag_min = 25
+
+[risk]
+# These are utility penalties, not literal fees. They express "I would pay
+# this much to not deal with that".
+self_transfer_penalty_eur = 35.0
+airport_change_penalty_eur = 50.0
+overnight_penalty_eur = 80.0
+tight_connection_penalty_eur = 100.0
+separate_ticket_penalty_eur = 30.0
+redeye_penalty_eur = 20.0
+# A discovery-only price could be stale. Penalise it slightly so a verified
+# price wins ties. Verification removes this.
+unverified_penalty_pct = 0.03
+synthetic_penalty_pct = 0.0
+
+[search]
+# The adaptive planner spends this many provider queries, then stops.
+budget_queries = 80
+max_wall_seconds = 120
+parallelism = 6
+finalists_to_verify = 5
+# Kill a branch once it is this much worse than the best known utility.
+prune_threshold_pct = 0.30
+min_improvement_eur = 5.0
+# Stop early when the last N expansions produced nothing better.
+patience = 12
+# Stitch two one-way tickets through a hub into an itinerary nobody sells.
+# Runs last, on leftover budget only.
+# Price every origin x destination pair independently up front. This is what
+# makes "out of Rabat, back into Casablanca" reachable at all.
+leg_coverage = true
+synthesize_self_transfer = true
+self_transfer_hubs = 3
+
+[providers]
+# Order matters: earlier = preferred when prices tie.
+enabled = ["ryanair"]
+# Politeness. Applies to every network adapter.
+requests_per_minute = 20
+timeout_seconds = 25
+max_retries = 2
+cache_ttl_minutes = 180
+
+[providers.airline_direct]
+# Direct-at-source verification of finalists only. Off by default: turn it on
+# knowingly, and keep the rate limit low.
+enabled = false
+carriers = []

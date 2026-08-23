@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flightarb</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#fff; --fg:#1b1917; --muted:#6d6760; --line:#e5e0d8;
+    --accent:#8a4b1c; --accent-soft:#f5ece3; --good:#1d6b3e; --bad:#8f2b2b;
+    --shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#131210; --panel:#1c1a17; --fg:#ece7df; --muted:#9b958b; --line:#2e2b26;
+      --accent:#d99a5b; --accent-soft:#2a2119; --good:#63b884; --bad:#e58b8b;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#131210; --panel:#1c1a17; --fg:#ece7df; --muted:#9b958b; --line:#2e2b26;
+    --accent:#d99a5b; --accent-soft:#2a2119; --good:#63b884; --bad:#e58b8b;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif}
+  header{border-bottom:1px solid var(--line);padding:1.1rem 1.25rem;display:flex;
+    align-items:baseline;gap:.9rem;flex-wrap:wrap}
+  h1{font-size:1.1rem;margin:0;letter-spacing:-.01em}
+  h1 span{color:var(--muted);font-weight:400}
+  #status{margin-left:auto;font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+    font-weight:700;padding:.15rem .55rem;border-radius:100px;border:1px solid currentColor}
+  .pill.real{color:var(--good)} .pill.sim{color:var(--bad)}
+  main{max-width:70rem;margin:0 auto;padding:1.25rem}
+
+  form{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:1.1rem;box-shadow:var(--shadow);display:grid;gap:.85rem;
+    grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr))}
+  label{display:flex;flex-direction:column;gap:.3rem;font-size:.76rem;color:var(--muted)}
+  input,select{font:inherit;font-size:.9rem;padding:.5rem .6rem;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .wide{grid-column:span 2}
+  button{font:inherit;font-weight:650;padding:.6rem 1.1rem;border-radius:8px;border:0;
+    background:var(--accent);color:#fff;cursor:pointer;align-self:end}
+  button:disabled{opacity:.55;cursor:progress}
+  details.adv{grid-column:1/-1;font-size:.82rem;color:var(--muted)}
+  details.adv summary{cursor:pointer;padding:.2rem 0}
+  details.adv .row{display:grid;gap:.85rem;margin-top:.7rem;
+    grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr))}
+
+  #live{margin-top:1rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.76rem;color:var(--muted);background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:.7rem .9rem;max-height:11rem;overflow:auto;display:none}
+  #live div{white-space:pre}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:1.15rem 1.3rem;margin-top:1rem;box-shadow:var(--shadow)}
+  .badge{display:inline-block;font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;
+    font-weight:700;color:var(--accent);background:var(--accent-soft);
+    border-radius:100px;padding:.2rem .7rem}
+  .headline{font-size:1.05rem;font-weight:640;margin:.65rem 0 .1rem}
+  .price{font-size:1.85rem;font-weight:730;letter-spacing:-.025em}
+  .price small{font-size:.8rem;font-weight:500;color:var(--muted);letter-spacing:0}
+  .meta{color:var(--muted);font-size:.84rem}
+  .legs{margin:.85rem 0;display:grid;gap:.15rem}
+  .leg{font-variant-numeric:tabular-nums;font-size:.9rem}
+  .leg b{display:inline-block;min-width:3rem;color:var(--muted);font-weight:600;font-size:.74rem;
+    text-transform:uppercase;letter-spacing:.06em}
+  .ground{color:var(--muted);font-size:.84rem;padding-left:3rem}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin-top:.5rem}
+  td{padding:.26rem 0;border-bottom:1px dashed var(--line)}
+  td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  tr.total td{font-weight:700;border-bottom:1px solid var(--line)}
+  tr.soft td{color:var(--muted)}
+  ul{margin:.6rem 0 0;padding-left:1.15rem} li{margin:.18rem 0}
+  .rej{border-left:3px solid var(--bad);padding:.15rem 0 .15rem .9rem;margin:.75rem 0}
+  .apts{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem}
+  .apt{font-size:.78rem;border:1px solid var(--line);border-radius:8px;padding:.3rem .55rem;
+    font-variant-numeric:tabular-nums}
+  .apt.base{border-color:var(--accent);color:var(--accent)}
+  .warn{color:var(--bad);font-size:.84rem;margin-top:.4rem}
+  .err{color:var(--bad)}
+  a.book{display:inline-block;margin-top:.7rem;font-size:.85rem;color:var(--accent)}
+  .scroll{overflow-x:auto}
+  @media (max-width:560px){ .wide{grid-column:span 1} }
+</style>
+</head>
+<body>
+<header>
+  <h1>flightarb <span>— door-to-door, not airfare</span></h1>
+  <div id="status">…</div>
+</header>
+
+<main>
+  <form id="f">
+    <label class="wide">From
+      <input name="origin" value="Casablanca" required autocomplete="off">
+    </label>
+    <label class="wide">To
+      <input name="destination" value="Malaga" required autocomplete="off">
+    </label>
+    <label>Depart <input type="date" name="depart" required></label>
+    <label>Return <input type="date" name="return"></label>
+    <label>Adults <input type="number" name="adults" value="2" min="1" max="9"></label>
+    <label>Children <input type="number" name="children" value="2" min="0" max="9"></label>
+    <label>Checked bags <input type="number" name="checked_bags" value="1" min="0" max="9"></label>
+    <label>Date flex ±<input type="number" name="flex" value="3" min="0" max="5"></label>
+    <button id="go">Search</button>
+
+    <details class="adv">
+      <summary>Preferences — these change the answer</summary>
+      <div class="row">
+        <label>Your time is worth (€/h)
+          <input type="number" name="value_of_time" value="25" min="0" max="500" step="1">
+        </label>
+        <label>Max travel to airport (min)
+          <input type="number" name="max_origin_minutes" value="240" min="0" max="600" step="10">
+        </label>
+        <label>Cabin bags <input type="number" name="cabin_bags" value="1" min="0" max="9"></label>
+        <label>Cabin
+          <select name="cabin">
+            <option value="economy">Economy</option>
+            <option value="premium_economy">Premium economy</option>
+            <option value="business">Business</option>
+          </select>
+        </label>
+        <label>Query budget <input type="number" name="budget" value="60" min="4" max="400"></label>
+      </div>
+    </details>
+  </form>
+
+  <div id="live"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const eur = n => "€" + Number(n).toLocaleString(undefined,{maximumFractionDigits:0});
+const hm  = m => { m=Math.round(Math.abs(m)); const h=Math.floor(m/60), r=m%60;
+                   return h && r ? `${h}h${String(r).padStart(2,"0")}` : h ? `${h}h` : `${r} min`; };
+
+// Default to a sensible future window.
+{
+  const d = new Date(Date.now() + 26*864e5), r = new Date(Date.now() + 30*864e5);
+  const iso = x => x.toISOString().slice(0,10);
+  $('[name=depart]').value = iso(d); $('[name=return]').value = iso(r);
+}
+
+fetch("/api/health").then(r=>r.json()).then(h=>{
+  const cls = h.real_prices ? "real" : "sim";
+  const txt = h.real_prices ? "real prices" : "simulated prices";
+  $("#status").innerHTML =
+    `<span class="pill ${cls}">${txt}</span> ${esc(h.providers.join(", ")||"no provider")}
+     · ${h.airports.toLocaleString()} airports`;
+}).catch(()=>{ $("#status").textContent = "offline"; });
+
+$("#f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = $("#go"); btn.disabled = true; btn.textContent = "Searching…";
+  const live = $("#live"); live.style.display = "block"; live.innerHTML = "";
+  $("#out").innerHTML = "";
+
+  const q = new URLSearchParams(new FormData(e.target)).toString();
+  const started = Date.now();
+  const tick = setInterval(() => btn.textContent = `Searching… ${((Date.now()-started)/1000).toFixed(0)}s`, 250);
+
+  try {
+    const resp = await fetch("/api/search?" + q);
+    if (!resp.ok) { const j = await resp.json().catch(()=>({error:resp.statusText}));
+                    throw new Error(j.error || "search failed"); }
+    // Newline-delimited JSON: progress lines, then the result.
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const {value, done} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl+1);
+        if (!line.trim()) continue;
+        handle(JSON.parse(line));
+      }
+    }
+  } catch (err) {
+    $("#out").innerHTML = `<div class="card err">${esc(err.message)}</div>`;
+  } finally {
+    clearInterval(tick); btn.disabled = false; btn.textContent = "Search";
+  }
+});
+
+function handle(msg){
+  if (msg.type === "start"){
+    $("#live").innerHTML = `<div>searching ${esc(msg.origin)} → ${esc(msg.destination)}</div>`;
+  } else if (msg.type === "step"){
+    const best = msg.best == null ? "—" : Math.round(msg.best);
+    const d = document.createElement("div");
+    d.textContent = `  ${msg.config.padEnd(26)} offers=${String(msg.offers).padEnd(4)} best=${best}` +
+                    (msg.note ? `  ${msg.note}` : "");
+    $("#live").appendChild(d); $("#live").scrollTop = 1e6;
+  } else if (msg.type === "error"){
+    $("#out").innerHTML = `<div class="card err">${esc(msg.error)}</div>`;
+  } else if (msg.type === "result"){
+    render(msg.data);
+  }
+}
+
+function legRows(plan, label){
+  if (!plan) return "";
+  let h = `<div class="leg"><b>${label}</b>${esc(plan.flight.segments[0].depart.slice(0,10))}</div>`;
+  if (plan.ground_out.minutes > 0)
+    h += `<div class="ground">↓ ${esc(plan.ground_out.from)} → ${esc(plan.ground_out.to)} ·
+          ${plan.ground_out.minutes} min · ${eur(plan.ground_out.cost_eur)} by ${esc(plan.ground_out.mode)}</div>`;
+  for (const s of plan.flight.segments)
+    h += `<div class="leg"><b></b>${s.depart.slice(11,16)} ${esc(s.origin)} → ${s.arrive.slice(11,16)}
+          ${esc(s.destination)} · ${esc(s.carrier)} · ${hm(s.duration_min)}</div>`;
+  if (plan.ground_in.minutes > 0)
+    h += `<div class="ground">↓ ${esc(plan.ground_in.from)} → ${esc(plan.ground_in.to)} ·
+          ${plan.ground_in.minutes} min · ${eur(plan.ground_in.cost_eur)}</div>`;
+  return h;
+}
+
+function card(rec){
+  const j = rec.journey, c = j.cost;
+  const rows = [["Fare",c.fare],["Bags",c.bags],["Ground",c.ground],["Hotel",c.hotel],["Fees",c.fees]]
+    .filter(([,v]) => v > 0)
+    .map(([k,v]) => `<tr><td>${k}</td><td>€${v.toFixed(2)}</td></tr>`).join("");
+  const url = j.outbound.flight.booking_url;
+  return `<section class="card">
+    <span class="badge">${esc(rec.label)}</span>
+    <div class="headline">${esc(rec.headline)}</div>
+    <div class="price">${eur(c.cash)} <small>all-in · ${hm(c.door_to_door_min)} door to door</small></div>
+    <div class="meta">${esc(j.endpoints)} · ${esc(j.ticketing.replace(/_/g," "))} ·
+      ${j.confidence === "verified" ? "verified at carrier"
+        : j.confidence === "synthetic" ? "SIMULATED PRICE" : "unverified"}</div>
+    <div class="legs scroll">${legRows(j.outbound,"Out")}${legRows(j.inbound,"Back")}</div>
+    <div class="scroll"><table>${rows}
+      <tr class="total"><td>Cash total</td><td>€${c.cash.toFixed(2)}</td></tr>
+      ${c.time_cost ? `<tr class="soft"><td>Time cost</td><td>€${c.time_cost.toFixed(2)}</td></tr>`:""}
+      ${c.risk_penalty ? `<tr class="soft"><td>Risk penalty</td><td>€${c.risk_penalty.toFixed(2)}</td></tr>`:""}
+      <tr class="soft"><td>Decision score <em>(ranking only)</em></td><td>€${c.utility.toFixed(2)}</td></tr>
+    </table></div>
+    ${rec.why?.length ? `<ul>${rec.why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+    ${url ? `<a class="book" href="${esc(url)}" target="_blank" rel="noopener">Open on the airline site →</a>` : ""}
+  </section>`;
+}
+
+function render(d){
+  const a = d.airports_considered;
+  const chips = side => a[side].map(x =>
+    `<span class="apt ${x.baseline?"base":""}">${esc(x.iata)} · ${x.minutes} min · ${eur(x.cost_eur)}</span>`).join("");
+
+  let h = `<section class="card">
+      <span class="badge">Airports considered</span>
+      <div class="meta" style="margin-top:.6rem">From ${esc(d.request.origin)}</div>
+      <div class="apts">${chips("origin")}</div>
+      <div class="meta" style="margin-top:.6rem">To ${esc(d.request.destination)}</div>
+      <div class="apts">${chips("destination")}</div>
+      <div class="meta" style="margin-top:.6rem">Highlighted = what an ordinary search would have used.</div>
+    </section>`;
+
+  h += d.recommendations.length ? d.recommendations.map(card).join("")
+     : `<div class="card">No journey met your constraints. Try widening the airport
+        travel limit or the date flexibility.</div>`;
+
+  if (d.rejected?.length){
+    h += `<section class="card"><span class="badge">Investigated and rejected</span>` +
+      d.rejected.slice(0,6).map(r =>
+        `<div class="rej"><strong>${esc(r.journey.endpoints)}</strong> · fare ${eur(r.journey.cost.fare)}
+         <div class="meta">${esc(r.reason)}</div></div>`).join("") + `</section>`;
+  }
+
+  const s = d.stats;
+  h += `<section class="card"><div class="meta">
+      ${s.configs_visited} configurations probed · ${s.queries_used} provider queries ·
+      ${s.journeys_considered} journeys assembled · ${s.seconds}s · stopped: ${esc(s.stopped_because)}
+      ${s.verified ? ` · ${s.verified} finalist(s) re-priced at the carrier` : ""}
+    </div>` + (d.warnings||[]).map(w=>`<div class="warn">! ${esc(w)}</div>`).join("") + `</section>`;
+
+  $("#out").innerHTML = h;
+}
+</script>
+</body>
+</html>
