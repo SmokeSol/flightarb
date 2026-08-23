@@ -84,6 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--providers", default=None, help="comma-separated provider list")
 
+    w2 = sub.add_parser("watch", help="run watchlist.toml and build the static site")
+    w2.add_argument("--watchlist", default="watchlist.toml")
+    w2.add_argument("--site", default="site", help="output directory for GitHub Pages")
+    w2.add_argument("--history", default="history/observations.jsonl")
+    w2.add_argument("--providers", default=None, help="comma-separated provider list")
+    w2.add_argument("--only", default=None, help="run only trips whose name matches this text")
+
     sub.add_parser("providers", help="show which acquisition adapters are usable")
     sub.add_parser("doctor", help="check this machine can actually run a search")
     sub.add_parser("memory", help="show what the price memory holds")
@@ -207,6 +214,39 @@ def cmd_serve(args) -> int:
     with Runtime.build(policy=policy, db_path=db, providers=providers) as rt:
         serve(rt, host=args.host, port=args.port)
     return 0
+
+
+def cmd_watch(args) -> int:
+    from .watch import load_watchlist, run_watchlist
+
+    policy = _policy_for(args)
+    providers = [p.strip() for p in args.providers.split(",")] if args.providers else None
+    trips = load_watchlist(args.watchlist)
+    if args.only:
+        needle = args.only.lower()
+        trips = [t for t in trips if needle in t.name.lower()]
+    if not trips:
+        print("no trips to run", file=sys.stderr)
+        return 1
+
+    print(f"running {len(trips)} watched trip(s)")
+    result = run_watchlist(
+        runtime_policy=policy,
+        watchlist=trips,
+        site_dir=Path(args.site),
+        history_path=Path(args.history),
+        db_path=None if args.no_db else (args.db or Runtime.default_db()),
+        providers=providers,
+    )
+    for name in result.ran:
+        print(f"  ok   {name}")
+    for name, reason in result.failed.items():
+        print(f"  FAIL {name}: {reason}", file=sys.stderr)
+    print()
+    print(f"{len(result.ran)} ran, {len(result.failed)} failed, "
+          f"{result.observations} observation(s) recorded")
+    print(f"site written to {args.site}/")
+    return 0 if result.ran else 1
 
 
 def cmd_providers(args) -> int:
@@ -344,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         "search": cmd_search,
         "data": cmd_data,
         "serve": cmd_serve,
+        "watch": cmd_watch,
         "providers": cmd_providers,
         "doctor": cmd_doctor,
         "memory": cmd_memory,

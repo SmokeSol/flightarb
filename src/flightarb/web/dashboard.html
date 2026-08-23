@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flightarb — watched trips</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#fff; --fg:#1b1917; --muted:#6d6760; --line:#e5e0d8;
+    --accent:#8a4b1c; --accent-soft:#f5ece3; --good:#1d6b3e; --bad:#8f2b2b;
+    --shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#131210; --panel:#1c1a17; --fg:#ece7df; --muted:#9b958b; --line:#2e2b26;
+      --accent:#d99a5b; --accent-soft:#2a2119; --good:#63b884; --bad:#e58b8b;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#131210; --panel:#1c1a17; --fg:#ece7df; --muted:#9b958b; --line:#2e2b26;
+    --accent:#d99a5b; --accent-soft:#2a2119; --good:#63b884; --bad:#e58b8b;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif}
+  header{border-bottom:1px solid var(--line);padding:1.1rem 1.25rem;display:flex;
+    align-items:baseline;gap:.8rem;flex-wrap:wrap}
+  h1{font-size:1.1rem;margin:0;letter-spacing:-.01em}
+  h1 span{color:var(--muted);font-weight:400}
+  #meta{margin-left:auto;font-size:.8rem;color:var(--muted)}
+  main{max-width:64rem;margin:0 auto;padding:1.25rem}
+  .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(19rem,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:1.1rem 1.25rem;box-shadow:var(--shadow)}
+  .name{font-weight:640;font-size:1rem;margin-bottom:.15rem}
+  .when{color:var(--muted);font-size:.84rem}
+  .price{font-size:1.9rem;font-weight:730;letter-spacing:-.025em;margin:.55rem 0 .1rem}
+  .price small{font-size:.78rem;font-weight:500;color:var(--muted);letter-spacing:0}
+  .route{font-variant-numeric:tabular-nums;font-size:.88rem;color:var(--muted)}
+  .head{font-size:.9rem;margin:.5rem 0 .2rem}
+  .tag{display:inline-block;font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+    font-weight:700;padding:.12rem .5rem;border-radius:100px;border:1px solid currentColor}
+  .tag.verified{color:var(--good)} .tag.discovery{color:var(--muted)}
+  .tag.synthetic{color:var(--bad)}
+  .tag.low{color:var(--good)} .tag.high{color:var(--bad)}
+  svg.spark{display:block;width:100%;height:44px;margin-top:.7rem;overflow:visible}
+  .hist{color:var(--muted);font-size:.78rem;margin-top:.3rem;
+    display:flex;justify-content:space-between;gap:.5rem}
+  details{margin-top:.8rem;font-size:.86rem}
+  summary{cursor:pointer;color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:.5rem}
+  td{padding:.24rem 0;border-bottom:1px dashed var(--line)}
+  td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  .leg{font-variant-numeric:tabular-nums;font-size:.86rem;margin:.12rem 0}
+  .ground{color:var(--muted);font-size:.8rem}
+  ul{margin:.5rem 0 0;padding-left:1.1rem} li{margin:.15rem 0}
+  .err{color:var(--bad)}
+  footer{max-width:64rem;margin:0 auto;padding:1.5rem 1.25rem;color:var(--muted);
+    font-size:.8rem;border-top:1px solid var(--line)}
+  code{background:var(--accent-soft);padding:.1rem .35rem;border-radius:4px;font-size:.85em}
+</style>
+</head>
+<body>
+<header>
+  <h1>flightarb <span>— watched trips</span></h1>
+  <div id="meta">loading…</div>
+</header>
+
+<main><div class="grid" id="grid"></div><div id="problems"></div></main>
+
+<footer>
+  Prices are refreshed by a scheduled GitHub Action and served as static files.
+  Nothing runs in your browser except this page.
+  Edit <code>watchlist.toml</code> to change what is watched, or run the workflow
+  manually from the Actions tab for an ad-hoc search.
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const eur = n => n == null ? "—" : "€" + Number(n).toLocaleString(undefined,{maximumFractionDigits:0});
+const hm  = m => { if (m == null) return "—"; m=Math.round(m); const h=Math.floor(m/60), r=m%60;
+                   return h && r ? `${h}h${String(r).padStart(2,"0")}` : h ? `${h}h` : `${r}m`; };
+const day = s => s ? new Date(s + (s.length === 10 ? "T00:00:00" : "")).toLocaleDateString(
+                   undefined,{weekday:"short",day:"numeric",month:"short"}) : "—";
+
+function spark(series){
+  if (!series || series.length < 2) return "";
+  const vals = series.map(p => p.cash);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi - lo) || 1;
+  const W = 100, H = 40;
+  const pts = vals.map((v,i) => {
+    const x = (i / (vals.length - 1)) * W;
+    const y = H - ((v - lo) / span) * H;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  const last = vals[vals.length-1];
+  const cy = H - ((last - lo) / span) * H;
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points="${pts.join(" ")}" fill="none" stroke="var(--accent)"
+                stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      <circle cx="${W}" cy="${cy.toFixed(2)}" r="2.5" fill="var(--accent)"
+              vector-effect="non-scaling-stroke"/>
+    </svg>`;
+}
+
+function verdict(trip, hist){
+  if (!hist || hist.observations < 4 || trip.best_cash == null) return "";
+  const {cheapest_ever, dearest_ever} = hist;
+  if (dearest_ever <= cheapest_ever) return "";
+  const pct = (trip.best_cash - cheapest_ever) / (dearest_ever - cheapest_ever);
+  if (pct <= 0.15) return `<span class="tag low">cheapest we have seen</span>`;
+  if (pct <= 0.4)  return `<span class="tag low">good vs history</span>`;
+  if (pct >= 0.8)  return `<span class="tag high">dearer than usual</span>`;
+  return "";
+}
+
+function legRows(plan, label){
+  if (!plan) return "";
+  let h = `<div class="leg"><strong>${label}</strong> ${day(plan.flight.segments[0].depart.slice(0,10))}</div>`;
+  if (plan.ground_out.minutes > 0)
+    h += `<div class="ground">↓ ${esc(plan.ground_out.from)} → ${esc(plan.ground_out.to)} ·
+          ${plan.ground_out.minutes} min · ${eur(plan.ground_out.cost_eur)}</div>`;
+  for (const s of plan.flight.segments)
+    h += `<div class="leg">${s.depart.slice(11,16)} ${esc(s.origin)} → ${s.arrive.slice(11,16)}
+          ${esc(s.destination)} · ${esc(s.carrier)} · ${hm(s.duration_min)}</div>`;
+  if (plan.ground_in.minutes > 0)
+    h += `<div class="ground">↓ ${esc(plan.ground_in.from)} → ${esc(plan.ground_in.to)} ·
+          ${plan.ground_in.minutes} min · ${eur(plan.ground_in.cost_eur)}</div>`;
+  return h;
+}
+
+async function detail(slug, el){
+  if (el.dataset.loaded) return;
+  el.dataset.loaded = "1";
+  try{
+    const d = await (await fetch(`data/${slug}.json`)).json();
+    let h = "";
+    for (const rec of d.recommendations){
+      const c = rec.journey.cost;
+      h += `<div style="margin:.7rem 0"><span class="tag">${esc(rec.label)}</span>
+        <div class="head">${esc(rec.headline)}</div>
+        ${legRows(rec.journey.outbound,"Out")}${legRows(rec.journey.inbound,"Back")}
+        <table>
+          <tr><td>Fare</td><td>€${c.fare.toFixed(2)}</td></tr>
+          ${c.bags ? `<tr><td>Bags</td><td>€${c.bags.toFixed(2)}</td></tr>`:""}
+          ${c.ground ? `<tr><td>Ground</td><td>€${c.ground.toFixed(2)}</td></tr>`:""}
+          <tr><td><strong>Cash total</strong></td><td><strong>€${c.cash.toFixed(2)}</strong></td></tr>
+        </table>
+        ${rec.why?.length ? `<ul>${rec.why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:""}
+      </div>`;
+    }
+    if (d.rejected?.length){
+      h += `<div style="margin-top:.8rem"><span class="tag">Investigated and rejected</span>` +
+        d.rejected.slice(0,4).map(r =>
+          `<div class="ground" style="margin:.4rem 0">
+             <strong>${esc(r.journey.endpoints)}</strong> · fare ${eur(r.journey.cost.fare)}<br>
+             ${esc(r.reason)}</div>`).join("") + `</div>`;
+    }
+    el.querySelector(".body").innerHTML = h;
+  } catch(e){
+    el.querySelector(".body").innerHTML = `<div class="err">could not load details</div>`;
+  }
+}
+
+(async () => {
+  let d;
+  try { d = await (await fetch("data/index.json", {cache:"no-store"})).json(); }
+  catch(e){
+    $("#meta").textContent = "no data yet";
+    $("#grid").innerHTML = `<div class="card">No results published yet. Run the
+      <strong>watch</strong> workflow from the Actions tab.</div>`;
+    return;
+  }
+
+  const when = new Date(d.generated_at);
+  const ageH = (Date.now() - when) / 36e5;
+  $("#meta").innerHTML = `updated ${when.toLocaleString()} ` +
+    (ageH > 48 ? `<span class="tag high">stale</span>` : "");
+
+  $("#grid").innerHTML = d.trips.map(t => {
+    const hist = d.history?.[t.slug];
+    return `<section class="card" id="c-${esc(t.slug)}">
+      <div class="name">${esc(t.name)}</div>
+      <div class="when">${day(t.depart)}${t.return ? " → " + day(t.return) : ""} ·
+        ${t.party.adults} adult${t.party.adults===1?"":"s"}${t.party.children?`, ${t.party.children} child`:""}</div>
+      <div class="price">${eur(t.best_cash)} <small>all-in · ${hm(t.door_to_door_min)} door to door</small></div>
+      <div class="route">${esc(t.route ?? "")}
+        <span class="tag ${esc(t.confidence ?? "")}">${esc(t.confidence ?? "")}</span>
+        ${verdict(t, hist)}</div>
+      <div class="head">${esc(t.headline)}</div>
+      ${spark(hist?.series)}
+      ${hist ? `<div class="hist"><span>low ${eur(hist.cheapest_ever)}</span>
+        <span>${hist.observations} observation${hist.observations===1?"":"s"}</span>
+        <span>high ${eur(hist.dearest_ever)}</span></div>` : ""}
+      <details><summary>Full breakdown</summary><div class="body">loading…</div></details>
+    </section>`;
+  }).join("");
+
+  for (const t of d.trips){
+    const card = document.getElementById(`c-${t.slug}`);
+    card.querySelector("details").addEventListener("toggle", e => {
+      if (e.target.open) detail(t.slug, card);
+    });
+  }
+
+  const failed = Object.entries(d.failed || {});
+  if (failed.length){
+    $("#problems").innerHTML = `<section class="card" style="margin-top:1rem">
+      <span class="tag high">Did not run</span>` +
+      failed.map(([n,r]) => `<div class="err" style="margin-top:.4rem">
+        <strong>${esc(n)}</strong>: ${esc(r)}</div>`).join("") + `</section>`;
+  }
+})();
+</script>
+</body>
+</html>

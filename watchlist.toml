@@ -1,0 +1,43 @@
+# ===========================================================================
+#  Trips to watch.
+#
+#  A scheduled GitHub Action runs every entry here, publishes the results to
+#  GitHub Pages, and appends what it saw to the price history. Nothing runs on
+#  your machine and nothing is hosted anywhere you pay for.
+#
+#  Dates can be absolute ("2026-09-18") or relative ("+30d"), which is what you
+#  want for a standing watch: "a long weekend about a month out, always".
+# ===========================================================================
+
+[[trip]]
+name = "Casablanca -> Malaga, family"
+origin = "Casablanca"
+destination = "Malaga"
+depart = "+26d"
+return = "+30d"
+adults = 2
+children = 2
+checked_bags = 1
+flex = 3
+max_origin_minutes = 240
+
+[[trip]]
+name = "Casablanca -> Malaga, solo"
+origin = "Casablanca"
+destination = "Malaga"
+depart = "+26d"
+return = "+30d"
+adults = 1
+flex = 3
+max_origin_minutes = 240
+value_of_time = 8.0
+
+[[trip]]
+name = "Casablanca -> Madrid"
+origin = "Casablanca"
+destination = "Madrid"
+depart = "+40d"
+return = "+45d"
+adults = 1
+flex = 2
+max_origin_minutes = 240

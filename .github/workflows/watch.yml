@@ -1,0 +1,171 @@
+name: watch
+
+# The engine runs here. GitHub Pages only serves the static result, because
+# Pages cannot execute Python -- so Actions is the compute, the repository is
+# the price memory, and Pages is the front end.
+
+on:
+  schedule:
+    # 06:15 UTC daily. Fares move most around midnight in the carrier's market,
+    # and a morning snapshot is what you actually want to read.
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: "Ad-hoc search: from (city or IATA). Leave blank to run only the watchlist."
+        required: false
+      destination:
+        description: "Ad-hoc search: to"
+        required: false
+      depart:
+        description: "Depart (YYYY-MM-DD or +30d)"
+        required: false
+        default: "+30d"
+      return:
+        description: "Return (blank for one-way)"
+        required: false
+      adults:
+        description: "Adults"
+        required: false
+        default: "1"
+      children:
+        description: "Children"
+        required: false
+        default: "0"
+      checked_bags:
+        description: "Checked bags"
+        required: false
+        default: "0"
+      flex:
+        description: "Date flexibility, +/- days"
+        required: false
+        default: "3"
+      max_origin_minutes:
+        description: "Furthest airport worth driving to, in minutes"
+        required: false
+        default: "240"
+
+permissions:
+  contents: write   # append the price history back to the repo
+  pages: write
+  id-token: write
+
+# Never let two runs fight over the history file.
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: pip install -e ".[discovery]"
+
+      - name: Cache the free datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: datasets-${{ hashFiles('src/flightarb/geo/datasets.py') }}
+
+      - name: Fetch datasets
+        run: python -m flightarb.cli data --refresh
+
+      - name: Add the ad-hoc trip, if one was requested
+        if: inputs.origin != ''
+        env:
+          ORIGIN: ${{ inputs.origin }}
+          DESTINATION: ${{ inputs.destination }}
+          DEPART: ${{ inputs.depart }}
+          RETURN: ${{ inputs.return }}
+          ADULTS: ${{ inputs.adults }}
+          CHILDREN: ${{ inputs.children }}
+          CHECKED: ${{ inputs.checked_bags }}
+          FLEX: ${{ inputs.flex }}
+          MAXMIN: ${{ inputs.max_origin_minutes }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+
+          # Inputs arrive through the environment and are re-quoted with
+          # json.dumps, never pasted into the file as-is. A destination typed as
+          # `x"\n[[trip]]` must not be able to append entries of its own.
+          env = os.environ
+
+          def text(key, default=""):
+              return json.dumps(str(env.get(key) or default))
+
+          def number(key, default, cast):
+              try:
+                  return cast(env.get(key) or default)
+              except ValueError:
+                  return cast(default)
+
+          lines = [
+              "",
+              "[[trip]]",
+              f'name = {json.dumps(f"{env["ORIGIN"]} -> {env["DESTINATION"]} (ad-hoc)")}',
+              f"origin = {text('ORIGIN')}",
+              f"destination = {text('DESTINATION')}",
+              f"depart = {text('DEPART', '+30d')}",
+          ]
+          if env.get("RETURN"):
+              lines.append(f"return = {text('RETURN')}")
+          lines += [
+              f"adults = {number('ADULTS', 1, int)}",
+              f"children = {number('CHILDREN', 0, int)}",
+              f"checked_bags = {number('CHECKED', 0, int)}",
+              f"flex = {number('FLEX', 3, int)}",
+              f"max_origin_minutes = {number('MAXMIN', 240, float)}",
+          ]
+
+          block = "\n".join(lines) + "\n"
+          path = pathlib.Path("watchlist.toml")
+          path.write_text(path.read_text(encoding="utf-8") + block, encoding="utf-8")
+          print(block)
+          PY
+
+      - name: Run the watchlist
+        run: |
+          python -m flightarb.cli watch \
+            --providers ryanair,fast-flights \
+            --site site \
+            --history history/observations.jsonl \
+            --no-db
+
+      - name: Commit the price history
+        run: |
+          # The ad-hoc entry is a one-off; never persist it into the watchlist.
+          git checkout -- watchlist.toml || true
+          if [ -z "$(git status --porcelain history)" ]; then
+            echo "no new observations"
+            exit 0
+          fi
+          git config user.name  "flightarb"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add history
+          git commit -m "history: $(date -u +%Y-%m-%d) observations"
+          # A concurrent push is normal here; rebase rather than fail the run.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publish:
+    needs: search
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
