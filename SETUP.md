@@ -85,21 +85,28 @@ To make it the default, edit `policy.toml`:
 enabled = ["ryanair", "fast-flights"]
 ```
 
-### Be aware before you rely on it
+### Status: verified in CI
 
-`src/flightarb/providers/fastflights.py` was written against the library's
-documented shape but **has never been executed** — the package was not installed
-on the machine it was written on. It is defensive (every field access is
-guarded, a failure trips the circuit breaker rather than crashing the search),
-but the first run on a real box is its first run anywhere.
+The `discovery` job in `.github/workflows/ci.yml` installs the package, calls
+the adapter and asserts it returns offers with sane prices, durations and
+segment structure. It is green, against **fast-flights 3.1**, returning real
+fares like:
 
-The `discovery` job in `.github/workflows/ci.yml` exists precisely to prove it:
-it installs the package, calls the adapter, and asserts it returns offers with
-sane prices and durations. **Check that job is green before trusting the
-adapter.** If it is red, the upstream library shape changed and
-`_to_offer()` in that file is where to fix it.
+```
+MAD-AGP      2026-10-02 06:30->07:45 UX     EUR  95.00 stops=0 elapsed=75m
+MAD-LIS-AGP  2026-10-02 22:25->22:55 TP     EUR  99.00 stops=1 elapsed=1470m
+```
 
-`ryanair` needs none of this and is verified end to end.
+Two things to know:
+
+- **It needs `fast-flights >= 3.1`.** Version 3 replaced `FlightData`/`Result`
+  with `create_query`/`FlightQuery`/`ResultList`; the adapter targets 3.x only.
+- **The extra also pins `typing_extensions`**, which fast-flights imports but
+  forgets to declare. Without it the package fails to import at all, and the
+  error message says "not installed" about the wrong package.
+
+If that CI job ever goes red, the upstream shape changed again and `_to_offer()`
+is where to fix it. `ryanair` is independent of all this.
 
 ---
 

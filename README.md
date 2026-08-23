@@ -207,7 +207,7 @@ about airfares. Simulated prices are never written to it.
 | Adapter | Role | Prices | Needs |
 |---|---|---|---|
 | **`ryanair`** *(default)* | Real fares, direct from the carrier | Real, **verified** | nothing |
-| `fast-flights` | Broad multi-airline discovery | Real, unverified | `pip install fast-flights` |
+| `fast-flights` | Broad multi-airline discovery | Real, unverified | `pip install -e ".[discovery]"` |
 | `browser` | Fallback when discovery is empty | Real, unverified | `pip install playwright` |
 | `synthetic` | Deterministic market simulator | **Simulated** | nothing |
 
@@ -219,6 +219,13 @@ flightarb search Casablanca Malaga --depart 2026-09-18 --providers ryanair,fast-
 uses — no key, no scraping, no package. Its `cheapestPerDay` endpoint returns a
 whole month of daily prices in one request, so a ±3-day flexible search costs
 *one* HTTP call per airport pair rather than one per date.
+
+**On `fast-flights`.** Targets the 3.x model, which hands over real per-segment
+records — airport codes, local clocks, per-leg durations — and prices quoted
+directly in EUR. So layovers are computed between two clocks at the *same*
+airport, which is correct across timezones by construction, and the traveller's
+bag counts are passed into the query rather than modelled. Verified by CI on
+every push.
 
 **On `synthetic`.** A deterministic fake market, built from real airport geography
 so the engine can be tested and demonstrated with no network at all. Its prices
@@ -292,11 +299,15 @@ Morocco–Spain timezone boundary reports a sane elapsed time.
 
 ## Honest limitations
 
-**One airline, for now.** The zero-install provider finds Ryanair fares and
+**The zero-install default is one airline.** `ryanair` finds Ryanair fares and
 nothing else. On the Morocco–Spain corridor that happens to be exactly the
-carrier that creates the arbitrage — but Royal Air Maroc, Vueling, Transavia and
-easyJet are invisible to it. For multi-airline coverage:
-`pip install fast-flights`, then `--providers ryanair,fast-flights`.
+carrier that creates the arbitrage — but Royal Air Maroc, Vueling and Transavia
+are invisible to it. Add multi-airline coverage with one package:
+
+```bash
+pip install -e ".[discovery]"
+flightarb search Casablanca Malaga --depart 2026-09-18 --providers ryanair,fast-flights
+```
 
 **`cheapestPerDay` gives the cheapest departure per day**, not every departure.
 Fine for deciding *where and when* to fly; check the airline site for the exact
