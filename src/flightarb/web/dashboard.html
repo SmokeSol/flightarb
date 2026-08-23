@@ -130,11 +130,14 @@
       then set exactly this:</p>
     <ul>
       <li><strong>Repository access</strong> → Only select repositories → <em>this repo</em></li>
-      <li><strong>Repository permissions</strong> → <strong>Actions</strong>: Read and write</li>
-      <li><strong>Repository permissions</strong> → <strong>Contents</strong>: Read-only</li>
+      <li><strong>Repository permissions</strong> → <strong>Actions</strong>: <em>Read and write</em></li>
     </ul>
-    <p>Both permissions matter: Actions to start the run, Contents so the token can
-      resolve the <code>main</code> branch. Give it a short expiry.</p>
+    <p>That is the only permission needed — <em>Read-only</em> is not enough, it must be
+      <em>Read and write</em>. <strong>Metadata: Read-only</strong> is added by GitHub
+      automatically; leave it. Give the token a short expiry.</p>
+    <p>Prefer not to use a token at all?
+      <a id="ghui" target="_blank" rel="noopener">Run it from GitHub's own UI</a> —
+      same engine, same result on this dashboard, nothing to paste.</p>
     <p class="warn">It is stored in this browser only (localStorage), never sent
       anywhere except github.com, and never committed. Anyone with it can run
       workflows in this one repo — which is why you scope it to this repo alone.</p>
@@ -268,9 +271,12 @@ if (!REPO){
 const tokenKey = REPO ? `flightarb:${REPO.owner}/${REPO.repo}:token` : "flightarb:token";
 const getToken = () => localStorage.getItem(tokenKey);
 
-if (REPO) $("#mktoken").href =
-  `https://github.com/settings/personal-access-tokens/new?name=flightarb&description=` +
-  `Trigger%20flightarb%20searches&target_name=${REPO.repo}`;
+if (REPO){
+  $("#mktoken").href =
+    `https://github.com/settings/personal-access-tokens/new?name=flightarb&description=` +
+    `Trigger%20flightarb%20searches&target_name=${REPO.repo}`;
+  $("#ghui").href = `https://github.com/${REPO.owner}/${REPO.repo}/actions/workflows/watch.yml`;
+}
 
 $("#savetoken").addEventListener("click", () => {
   const v = $("#token").value.trim();
@@ -347,8 +353,8 @@ async function diagnose(token){
       `<div>(that check started a real run; it will refresh the dashboard in a couple of minutes)</div>`;
   }
   if (disp.status === 403) return lines.join("") + no(
-      `can read Actions but not trigger them. The token needs <strong>Actions:
-       Read and write</strong>, not Read-only.`);
+      `can read Actions but not trigger them — the token has <strong>Actions:
+       Read-only</strong>. Edit it and set <strong>Actions: Read and write</strong>.`);
   if (disp.status === 422) return lines.join("") + no(
       `GitHub rejected the request: ${esc(disp.message || "")}. Usually the branch
        name — this repo's default branch must be <code>main</code>.`);
