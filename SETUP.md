@@ -60,11 +60,24 @@ max_origin_minutes = 240   # far enough to reach Rabat and Marrakesh
 `value_of_time` can be set per trip, which is how the same route gives a
 different answer for a backpacker and for a family of four.
 
-## 3. One-off search
+## 3. Search for anything
 
-Actions → **watch** → *Run workflow*, then fill in origin, destination and
-dates. It runs alongside the watchlist and appears on the dashboard a minute
-later. The ad-hoc entry is never written back into `watchlist.toml`.
+There is a search box on the dashboard. Type a trip, hit Search, and the page
+asks GitHub Actions to run the engine, follows the run, and shows the result
+when it lands — roughly two minutes end to end. A static page cannot price a
+flight itself; this is the closest thing to a search box that exists without a
+server.
+
+The first search asks for a token, once. Create a **fine-grained personal access
+token**, scoped to **only this repository**, with **Actions: Read and write** and
+nothing else, and give it a short expiry. It is kept in your browser's
+localStorage, is never committed, and is only ever sent to github.com. Anyone
+holding it could run workflows in this one repo — which is exactly why it is
+scoped to this one repo.
+
+No token, or prefer not to use one? Actions → **watch** → *Run workflow* does
+the same thing through GitHub's own UI. Either way the ad-hoc entry is never
+written back into `watchlist.toml`.
 
 ## 4. Change the economics
 

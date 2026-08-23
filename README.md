@@ -68,8 +68,11 @@ the repository   the memory     price history, compounding daily
 Pages cannot execute Python, so Actions does the searching and publishes JSON
 that Pages displays. A daily cron runs [`watchlist.toml`](watchlist.toml),
 commits what it saw to `history/observations.jsonl`, and the dashboard shows
-each watched trip with its price history. Ad-hoc searches run from the Actions
-tab. See [SETUP.md](SETUP.md).
+each watched trip with its price history.
+
+The dashboard has a **search box**: it dispatches the workflow, follows the run,
+and shows the result when it publishes — about two minutes, which is what a
+search costs when there is no server. See [SETUP.md](SETUP.md).
 
 > A Pages site is public even when the repo is private — your watchlist is
 > visible to anyone with the URL. Turn Pages off if that matters.
