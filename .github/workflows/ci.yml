@@ -136,6 +136,38 @@ jobs:
           print(f"OK: {len(offers)} offers, shape intact")
           PY
 
+      - name: Which airlines does multi-airline discovery actually see?
+        run: |
+          python - <<'PY'
+          from datetime import date, timedelta
+          from flightarb.policy import Policy
+          from flightarb.runtime import Runtime
+          from flightarb.providers.base import SearchQuery
+          from flightarb.models import Cabin
+
+          rt = Runtime.build(policy=Policy.default(), db_path=None,
+                             providers=["fast-flights"])
+          p = rt.registry.providers[0]
+          when = date.today() + timedelta(days=40)
+
+          for origin, dest in (("CMN", "AGP"), ("RBA", "AGP"), ("CMN", "MAD")):
+              try:
+                  offers = p._search(SearchQuery(origin, dest, when, None, seats=1,
+                                                 cabin=Cabin.ECONOMY, max_stops=1))
+              except Exception as exc:
+                  print(f"{origin}-{dest}: {type(exc).__name__}: {exc}")
+                  continue
+              names = {}
+              for o in offers:
+                  for n in o.raw.get("airlines") or []:
+                      names.setdefault(n, o.price_eur)
+                      names[n] = min(names[n], o.price_eur)
+              print(f"{origin}-{dest} on {when}: {len(offers)} itineraries, "
+                    f"{len(names)} airlines")
+              for n, price in sorted(names.items(), key=lambda kv: kv[1]):
+                  print(f"    {n:<28s} from EUR {price:.0f}")
+          PY
+
       - name: Real search using multi-airline discovery
         run: |
           python -m flightarb.cli search Madrid Malaga \
