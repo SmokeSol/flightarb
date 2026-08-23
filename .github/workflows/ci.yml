@@ -74,6 +74,35 @@ jobs:
       - run: pip install -e ".[dev,discovery]"
       - run: python -m flightarb.cli data --refresh
 
+      - name: What does the installed fast-flights actually expose?
+        run: |
+          python - <<'PY'
+          import traceback
+          print("--- import ---")
+          try:
+              import fast_flights as ff
+              print("version:", getattr(ff, "__version__", "?"))
+              print("public:", sorted(n for n in dir(ff) if not n.startswith("_")))
+              import inspect
+              for name in ("get_flights", "FlightData", "Passengers"):
+                  obj = getattr(ff, name, None)
+                  if obj is None:
+                      print(f"{name}: MISSING")
+                      continue
+                  try:
+                      print(f"{name}{inspect.signature(obj)}")
+                  except (TypeError, ValueError):
+                      print(f"{name}: {obj!r}")
+              res = getattr(ff, "Result", None)
+              if res is not None:
+                  print("Result fields:", getattr(res, "__annotations__", {}))
+              flt = getattr(ff, "Flight", None)
+              if flt is not None:
+                  print("Flight fields:", getattr(flt, "__annotations__", {}))
+          except Exception:
+              traceback.print_exc()
+          PY
+
       - name: fast-flights adapter is usable
         run: |
           python - <<'PY'

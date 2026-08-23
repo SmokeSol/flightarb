@@ -84,19 +84,26 @@ class FastFlightsProvider(FlightProvider):
     def __init__(self, ctx):
         super().__init__(ctx)
         self._mod = None
+        self._import_error: str | None = None
         try:
             import fast_flights  # type: ignore
 
             self._mod = fast_flights
-        except Exception:
-            self._mod = None
+        except ImportError as exc:
+            self._import_error = f"not installed ({exc})"
+        except Exception as exc:
+            # An installed-but-broken dependency is a completely different
+            # problem from a missing one -- most often a protobuf runtime
+            # mismatch. Reporting both as "not installed" sends you to fix the
+            # wrong thing, so keep the real reason.
+            self._import_error = f"installed but failed to import: {type(exc).__name__}: {exc}"
 
     def available(self) -> bool:
         return self._mod is not None and super().available()
 
     def unavailable_reason(self) -> str | None:
         if self._mod is None:
-            return "package not installed (pip install fast-flights)"
+            return self._import_error or "package not installed (pip install fast-flights)"
         return super().unavailable_reason()
 
     # ------------------------------------------------------------------ #
