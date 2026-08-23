@@ -79,6 +79,12 @@
     animation:crawl 150s linear forwards}
   @keyframes crawl{to{width:100%}}
   .warn{color:var(--bad)}
+  .good{color:var(--good)}
+  #diag{font-size:.84rem;margin-top:.7rem;display:grid;gap:.25rem}
+  #diag div{line-height:1.4}
+  dialog ul{margin:.4rem 0;padding-left:1.2rem;font-size:.86rem}
+  dialog menu button[value="check"]{background:transparent;color:var(--accent);
+    border:1px solid var(--accent)}
   dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);
     color:var(--fg);max-width:34rem;padding:1.4rem}
   dialog::backdrop{background:rgba(0,0,0,.5)}
@@ -120,16 +126,23 @@
     <h2>One-time setup</h2>
     <p>Searching runs the engine in GitHub Actions, and GitHub only accepts an
       authenticated request. Paste a token and this page can trigger it directly.</p>
-    <p><a id="mktoken" target="_blank" rel="noopener">Create a token</a> — choose
-      <strong>Only select repositories → this one</strong>, and under
-      <strong>Repository permissions</strong> set <strong>Actions: Read and write</strong>.
-      Nothing else. Give it a short expiry.</p>
+    <p><a id="mktoken" target="_blank" rel="noopener">Create a fine-grained token</a>,
+      then set exactly this:</p>
+    <ul>
+      <li><strong>Repository access</strong> → Only select repositories → <em>this repo</em></li>
+      <li><strong>Repository permissions</strong> → <strong>Actions</strong>: Read and write</li>
+      <li><strong>Repository permissions</strong> → <strong>Contents</strong>: Read-only</li>
+    </ul>
+    <p>Both permissions matter: Actions to start the run, Contents so the token can
+      resolve the <code>main</code> branch. Give it a short expiry.</p>
     <p class="warn">It is stored in this browser only (localStorage), never sent
       anywhere except github.com, and never committed. Anyone with it can run
       workflows in this one repo — which is why you scope it to this repo alone.</p>
     <input id="token" type="password" placeholder="github_pat_..." autocomplete="off">
+    <div id="diag"></div>
     <menu>
       <button value="cancel">Cancel</button>
+      <button id="checktoken" value="check">Check token</button>
       <button id="savetoken" value="save">Save</button>
     </menu>
   </form>
@@ -264,6 +277,84 @@ $("#savetoken").addEventListener("click", () => {
   if (v) localStorage.setItem(tokenKey, v);
 });
 
+// Enter in the token field otherwise submits the dialog with the FIRST button's
+// value -- Cancel -- and silently discards what was typed.
+$("#token").addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); $("#savetoken").click(); $("#setup").close("save"); }
+});
+
+$("#checktoken").addEventListener("click", async e => {
+  e.preventDefault();
+  const token = $("#token").value.trim() || getToken();
+  if (!token){ $("#diag").innerHTML = `<span class="err">Paste a token first.</span>`; return; }
+  $("#diag").textContent = "checking…";
+  $("#diag").innerHTML = await diagnose(token);
+});
+
+/** Ask GitHub what is actually wrong, one capability at a time. */
+async function diagnose(token){
+  const call = async (path, opts = {}) => {
+    try {
+      const res = await fetch(`https://api.github.com${path}`, {
+        ...opts,
+        headers: {Authorization: `Bearer ${token}`,
+                  Accept: "application/vnd.github+json", ...(opts.headers || {})},
+      });
+      let body = null;
+      try { body = res.status === 204 ? null : await res.json(); } catch(_) {}
+      return {status: res.status, message: body && body.message, body};
+    } catch (err){
+      return {status: 0, message: err.message};
+    }
+  };
+
+  const lines = [];
+  const ok = (t) => `<div class="good">✓ ${t}</div>`;
+  const no = (t) => `<div class="err">✗ ${t}</div>`;
+
+  const who = await call("/user");
+  if (who.status === 200) lines.push(ok(`token is valid, acting as <strong>${esc(who.body.login)}</strong>`));
+  else if (who.status === 401) return no("token is invalid or expired — create a new one") ;
+  else lines.push(`<div>token accepted, but /user says ${who.status} `
+                + `(normal for a fine-grained token without the profile permission)</div>`);
+
+  const repo = await call(`/repos/${REPO.owner}/${REPO.repo}`);
+  if (repo.status === 200) lines.push(ok(`can see <strong>${REPO.owner}/${REPO.repo}</strong>`));
+  else if (repo.status === 404) return lines.join("") + no(
+      `cannot see <strong>${REPO.owner}/${REPO.repo}</strong>. On a fine-grained token this
+       almost always means the repository was not selected: edit the token and set
+       <strong>Repository access → Only select repositories → ${esc(REPO.repo)}</strong>.
+       A classic token needs the <strong>repo</strong> scope.`);
+  else return lines.join("") + no(`repository check returned ${repo.status}: ${esc(repo.message || "")}`);
+
+  const wf = await call(`/repos/${REPO.owner}/${REPO.repo}/actions/workflows/watch.yml`);
+  if (wf.status === 200) lines.push(ok("can read Actions"));
+  else if (wf.status === 403) return lines.join("") + no(
+      `can see the repo but not Actions. Add <strong>Repository permissions →
+       Actions → Read and write</strong> to the token.`);
+  else if (wf.status === 404) return lines.join("") + no(
+      `Actions is readable but <code>watch.yml</code> was not found — has it been
+       pushed to the default branch?`);
+  else return lines.join("") + no(`workflow check returned ${wf.status}: ${esc(wf.message || "")}`);
+
+  const disp = await call(
+    `/repos/${REPO.owner}/${REPO.repo}/actions/workflows/watch.yml/dispatches`,
+    {method: "POST", headers: {"Content-Type": "application/json"},
+     body: JSON.stringify({ref: "main", inputs: {}})});
+  if (disp.status === 204){
+    localStorage.setItem(tokenKey, token);
+    return lines.join("") + ok("can trigger the workflow — token saved, you are good to go") +
+      `<div>(that check started a real run; it will refresh the dashboard in a couple of minutes)</div>`;
+  }
+  if (disp.status === 403) return lines.join("") + no(
+      `can read Actions but not trigger them. The token needs <strong>Actions:
+       Read and write</strong>, not Read-only.`);
+  if (disp.status === 422) return lines.join("") + no(
+      `GitHub rejected the request: ${esc(disp.message || "")}. Usually the branch
+       name — this repo's default branch must be <code>main</code>.`);
+  return lines.join("") + no(`dispatch returned ${disp.status}: ${esc(disp.message || "")}`);
+}
+
 { // sensible default dates
   const iso = x => x.toISOString().slice(0,10);
   $('[name=depart]').value = iso(new Date(Date.now() + 30*864e5));
@@ -278,12 +369,16 @@ async function gh(path, opts = {}){
     headers: {Authorization: `Bearer ${getToken()}`,
               Accept: "application/vnd.github+json", ...(opts.headers||{})},
   });
-  if (res.status === 401 || res.status === 403){
-    localStorage.removeItem(tokenKey);
-    throw new Error("GitHub rejected the token. It may be expired, or missing "
-                  + "the Actions: Read and write permission. Search again to re-enter it.");
+  if (!res.ok && res.status !== 204){
+    let detail = "";
+    try { const b = await res.json(); detail = b.message || ""; } catch(_) {}
+    if (res.status === 401) localStorage.removeItem(tokenKey);  // truly dead
+    const err = new Error(
+      `GitHub returned ${res.status}${detail ? ` — ${detail}` : ""}. ` +
+      `Open the token dialog and press "Check token" to see which permission is missing.`);
+    err.status = res.status;
+    throw err;
   }
-  if (!res.ok) throw new Error(`GitHub returned ${res.status} for ${path}`);
   return res.status === 204 ? null : res.json();
 }
 
@@ -347,7 +442,14 @@ $("#search").addEventListener("submit", async e => {
     }
     status(`<div class="warn">the run finished but the site has not refreshed yet — reload in a moment</div>`);
   } catch (err){
-    status(`<div class="err">${esc(err.message)}</div>`);
+    status(`<div class="err">${esc(err.message)}</div>
+            <div><a href="#" id="opensetup">Check the token</a></div>`);
+    $("#opensetup")?.addEventListener("click", ev => {
+      ev.preventDefault();
+      $("#token").value = getToken() || "";
+      $("#diag").innerHTML = "";
+      $("#setup").showModal();
+    });
   } finally {
     clearInterval(tick); btn.disabled = false; btn.textContent = "Search";
   }
